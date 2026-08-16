@@ -902,6 +902,13 @@ impl WorkspaceHost {
         Ok(self.mutate(|doc| doc.delete_chat(chat_id))?)
     }
 
+    /// Settings → Archived "Clear archived": tombstone every archived chat row
+    /// in one transaction, so every device applies the clear as a single
+    /// update. Returns the removed ids for the caller to purge.
+    pub fn delete_archived_chats(&self) -> Result<Vec<String>, EngineError> {
+        Ok(self.mutate(|doc| doc.delete_archived_chats())?)
+    }
+
     pub fn rename_device(&self, device_id: &str, name: &str) -> Result<bool, EngineError> {
         Ok(self.mutate(|doc| doc.rename_device(device_id, name))?)
     }

@@ -408,6 +408,39 @@ fn delete_chat_tombstones_row_and_session() {
 }
 
 #[test]
+fn delete_archived_chats_removes_only_archived_rows() {
+    let mut ws = RegistryDoc::new("dev-a");
+    for id in ["chat-1", "chat-2", "chat-3"] {
+        ws.upsert_chat(&chat(id, "dev-a")).unwrap();
+        ws.upsert_session(&session(id, "dev-a", SessionStatus::Idle))
+            .unwrap();
+    }
+    assert!(ws.set_chat_archived("chat-1", true).unwrap());
+    assert!(ws.set_chat_archived("chat-3", true).unwrap());
+
+    let removed = ws.delete_archived_chats().unwrap();
+    assert_eq!(removed, ["chat-1", "chat-3"]);
+
+    let left: Vec<String> = ws.read_chats().unwrap().into_iter().map(|c| c.id).collect();
+    assert_eq!(left, ["chat-2"]);
+    let sessions: Vec<String> = ws
+        .read_sessions()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.chat_id)
+        .collect();
+    assert_eq!(sessions, ["chat-2"]);
+}
+
+#[test]
+fn delete_archived_chats_is_a_no_op_when_nothing_is_archived() {
+    let mut ws = RegistryDoc::new("dev-a");
+    ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
+    assert!(ws.delete_archived_chats().unwrap().is_empty());
+    assert_eq!(ws.read_chats().unwrap().len(), 1);
+}
+
+#[test]
 fn spaces_round_trip_and_mutate() {
     let mut ws = RegistryDoc::new("dev-a");
     ws.upsert_space(&space("sp-1", "dev-a", "/home/u/project"))

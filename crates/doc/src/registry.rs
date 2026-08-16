@@ -1077,6 +1077,27 @@ impl RegistryDoc {
         Ok(existed)
     }
 
+    /// Tombstone every archived chat row (and its session row) in one batch,
+    /// so each device applies the clear as a single update. Returns the
+    /// removed ids; the per-chat session docs remain for the caller to purge.
+    pub fn delete_archived_chats(&mut self) -> Result<Vec<String>, DocError> {
+        let ids: Vec<String> = self
+            .read_chats()?
+            .into_iter()
+            .filter(|chat| chat.archived)
+            .map(|chat| chat.id)
+            .collect();
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        let keys: Vec<(&str, &str)> = ids
+            .iter()
+            .flat_map(|id| [(KIND_CHATS, id.as_str()), (KIND_SESSIONS, id.as_str())])
+            .collect();
+        self.delete_row_ops(&keys);
+        Ok(ids)
+    }
+
     // ── sessions ────────────────────────────────────────────────────────────
 
     /// Upsert a session-status row (writer discipline: each device writes only

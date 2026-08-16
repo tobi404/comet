@@ -11,7 +11,8 @@
 //! - `WatchSessions` → stream of `Session[]`: this engine's live statuses merged with
 //!   remote devices' workspace session rows
 //! - `Mutate {op, …}` → `{ok}` — workspace entity mutations (createChat, renameChat,
-//!   setChatArchived, deleteChat, renameDevice, markChatSeen)
+//!   setChatArchived, deleteChat, clearArchivedChats, renameDevice,
+//!   markChatSeen)
 //! - `EngineInfo` → `{deviceId, workspaceScope}` — this runtime's fixed identity
 //!   and data boundary (never forwarded)
 //! - `LocalDevice` → `{deviceId}` — legacy engine identity (never forwarded)
@@ -367,6 +368,9 @@ enum MutateParams {
     /// Tombstone: removes the chats-map row; the session doc remains.
     #[serde(rename_all = "camelCase")]
     DeleteChat { chat_id: String },
+    /// Settings → Archived "Clear archived": one-transaction hard delete of
+    /// every archived chat, on every device. Purges each session doc too.
+    ClearArchivedChats {},
     #[serde(rename_all = "camelCase")]
     RenameDevice { device_id: String, name: String },
     /// Synced seen marker (LWW + monotonic guard): clears the "completed"
@@ -750,6 +754,12 @@ impl EngineRpc {
             MutateParams::DeleteChat { chat_id } => {
                 self.workspace.delete_chat(&chat_id).map_err(failed)?;
                 self.doc_host.purge_chat(&chat_id);
+                Ok(())
+            }
+            MutateParams::ClearArchivedChats {} => {
+                for chat_id in self.workspace.delete_archived_chats().map_err(failed)? {
+                    self.doc_host.purge_chat(&chat_id);
+                }
                 Ok(())
             }
             MutateParams::RenameDevice { device_id, name } => self

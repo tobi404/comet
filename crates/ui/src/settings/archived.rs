@@ -1,5 +1,7 @@
 //! Settings → Archived (feature-inventory §1.5): archived chats across
-//! devices, with Unarchive (Mutate setChatArchived false).
+//! devices, with Unarchive (Mutate setChatArchived false) and a page-level
+//! Clear archived (Mutate clearArchivedChats — a permanent, all-device wipe
+//! behind a confirm dialog).
 
 use gpui::{
     AnyElement, Context, Entity, SharedString, Subscription, Task, Window, div, prelude::*, px,
@@ -8,12 +10,28 @@ use gpui::{
 use zeron_proto::Chat;
 use zeron_rpc::methods;
 
+use crate::popover;
 use crate::state::AppState;
 use crate::theme::Theme;
 
 /// Archived rows in sidebar (recency) order. Pure.
 pub fn archived_chats(chats: &[Chat]) -> Vec<&Chat> {
     chats.iter().filter(|c| c.archived).collect()
+}
+
+/// Whether the headline shows "Clear archived". Nothing archived → no action,
+/// so the empty state stays a single centered message. Pure.
+pub fn shows_clear_action(count: usize) -> bool {
+    count > 0
+}
+
+/// Confirm-dialog body copy. Names the count, and says the delete reaches
+/// every device — the list is cross-device. Pure.
+pub fn clear_confirm_copy(count: usize) -> String {
+    let sessions = if count == 1 { "session" } else { "sessions" };
+    format!(
+        "{count} archived {sessions} will be permanently deleted from all your devices. This can\u{2019}t be undone."
+    )
 }
 
 pub struct ArchivedPage {
@@ -24,7 +42,12 @@ pub struct ArchivedPage {
     /// Row index under the pointer — drives the original's `group-hover`
     /// Unarchive reveal (`opacity-0 group-hover:opacity-100`).
     hovered: Option<usize>,
+    /// Confirm dialog is open, holding the count it was opened with.
+    confirm: Option<usize>,
+    /// Clear-archived call is in flight (button shows a working state).
+    clearing: bool,
     task: Option<Task<()>>,
+    clear_task: Option<Task<()>>,
     _observe: Subscription,
 }
 
@@ -36,7 +59,10 @@ impl ArchivedPage {
             error: None,
             busy: None,
             hovered: None,
+            confirm: None,
+            clearing: false,
             task: None,
+            clear_task: None,
             _observe: observe,
         }
     }
@@ -65,10 +91,110 @@ impl ArchivedPage {
         }));
         cx.notify();
     }
+
+    /// One `clearArchivedChats` call: the engine tombstones every archived row
+    /// in a single transaction, so the list empties as one update rather than
+    /// draining row by row.
+    fn clear_archived(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        self.confirm = None;
+        self.clearing = true;
+        self.error = None;
+        let params = serde_json::json!({ "op": "clearArchivedChats" });
+        self.clear_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine.client().call(methods::MUTATE, params).await;
+            this.update(cx, |page, cx| {
+                page.clearing = false;
+                if let Err(err) = result {
+                    page.error = Some(format!("Clear archived failed: {err}").into());
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Headline action. Danger-toned but quiet — it sits next to a page title,
+    /// not inside the dialog it opens.
+    fn render_clear_button(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let clearing = self.clearing;
+        div()
+            .id("clear-archived")
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(10.0))
+            .py(px(4.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme.border)
+            .text_size(px(12.0))
+            .text_color(theme.danger_strong)
+            .when(clearing, |el| el.opacity(0.4))
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.surface_raised))
+            .on_click(cx.listener(|this, _, _, cx| {
+                if this.clearing {
+                    return;
+                }
+                this.confirm = Some(archived_chats(&this.state.read(cx).chats).len());
+                cx.notify();
+            }))
+            .child(SharedString::from(if clearing {
+                "Clearing\u{2026}"
+            } else {
+                "Clear archived"
+            }))
+            .into_any_element()
+    }
+
+    fn render_confirm_dialog(
+        &mut self,
+        viewport: gpui::Size<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let count = *self.confirm.as_ref()?;
+        let card = popover::dialog_card(&theme)
+            .child(popover::dialog_title(&theme, "Clear archived sessions?"))
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .child(popover::dialog_body(&theme, clear_confirm_copy(count))),
+            )
+            .child(
+                div()
+                    .mt(px(16.0))
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        popover::btn_ghost(&theme, "Cancel", "clear-archived-cancel")
+                            .id("clear-archived-cancel")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirm = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        popover::btn_danger(&theme, "Clear archived")
+                            .id("clear-archived-confirm")
+                            .on_click(cx.listener(|this, _, _, cx| this.clear_archived(cx))),
+                    ),
+            )
+            .into_any_element();
+        Some(popover::modal("clear-archived-dialog", viewport, card))
+    }
 }
 
 impl Render for ArchivedPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use crate::settings::widgets;
         let theme = Theme::of(cx).clone();
         let now = chrono::Utc::now();
@@ -280,20 +406,28 @@ impl Render for ArchivedPage {
                 .into_any_element()
         };
 
+        let header = {
+            let header =
+                widgets::page_header(&theme, "Archived sessions", (count > 0).then_some(count));
+            if shows_clear_action(count) {
+                let action = self.render_clear_button(cx);
+                widgets::page_header_action(header, action)
+            } else {
+                header
+            }
+        };
+        let dialog = self.render_confirm_dialog(window.viewport_size(), cx);
+
         div()
             .id("archived-page")
             .size_full()
             .overflow_y_scroll()
             .child(
                 widgets::page_column()
-                    .child(widgets::page_header(
-                        &theme,
-                        "Archived sessions",
-                        (count > 0).then_some(count),
-                    ))
+                    .child(header)
                     .child(widgets::page_subtitle(
                         &theme,
-                        "Hidden from the sidebar, never deleted. Unarchiving puts a session back on its device.",
+                        "Hidden from the sidebar. Unarchiving puts a session back on its device.",
                     ))
                     .when_some(self.error.clone(), |el, message| {
                         el.child(
@@ -308,6 +442,7 @@ impl Render for ArchivedPage {
                     })
                     .child(body),
             )
+            .when_some(dialog, |el, dialog| el.child(dialog))
     }
 }
 
@@ -335,6 +470,40 @@ mod tests {
             last_seen_at: None,
             room_gen: None,
         }
+    }
+
+    /// The confirm dialog is a permanent delete, so exactly ONE thing may open
+    /// it: pressing the button. A capture knob here once armed it from an env
+    /// var and popped it on page open, unasked. Nothing may re-introduce a
+    /// second opener.
+    #[test]
+    fn only_the_button_opens_the_confirm_dialog() {
+        // `concat!` so these needles do not match themselves in the scan.
+        let source = include_str!("archived.rs");
+        let openers = source.matches(concat!("confirm = ", "Some")).count();
+        assert_eq!(
+            openers, 1,
+            "exactly one code path may open the confirm dialog; found {openers}"
+        );
+        assert!(
+            !source.contains(concat!("ZERON_OPEN", "_DIALOG")),
+            "no env var may open a destructive dialog"
+        );
+    }
+
+    #[test]
+    fn clear_action_hides_on_an_empty_page() {
+        assert!(!shows_clear_action(0));
+        assert!(shows_clear_action(1));
+    }
+
+    #[test]
+    fn confirm_copy_counts_and_names_every_device() {
+        assert_eq!(
+            clear_confirm_copy(1),
+            "1 archived session will be permanently deleted from all your devices. This can\u{2019}t be undone."
+        );
+        assert!(clear_confirm_copy(12).starts_with("12 archived sessions will be"));
     }
 
     #[test]

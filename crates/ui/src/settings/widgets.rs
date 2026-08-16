@@ -45,6 +45,16 @@ pub fn page_header(theme: &Theme, title: &str, count: Option<usize>) -> gpui::Di
         })
 }
 
+/// Push a page-level control to the headline's trailing edge, on the title's
+/// own line (zeron settings headline row with a right-aligned action). The
+/// spacer keeps the title + count group left-aligned and baseline-shared.
+pub fn page_header_action(header: gpui::Div, action: AnyElement) -> gpui::Div {
+    header
+        .w_full()
+        .child(div().flex_1())
+        .child(div().flex_none().child(action))
+}
+
 /// Subtitle under the headline: `mt-1 text-[13px] text-muted-foreground`.
 pub fn page_subtitle(theme: &Theme, copy: impl Into<SharedString>) -> gpui::Div {
     div()
