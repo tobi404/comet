@@ -473,6 +473,16 @@ final class AppModel {
         workspace?.setArchived(chatId: chatId, archived: archived)
     }
 
+    /// Shelf header "Clear archived": permanent, and scoped to what the shelf
+    /// is showing — the same scope `archivedChats(in:)` reads.
+    func clearArchived(in spaceId: String? = nil) {
+        if let demo {
+            demo.chats.removeAll { $0.archived && (spaceId == nil || $0.spaceId == spaceId) }
+            return
+        }
+        workspace?.clearArchived(in: spaceId)
+    }
+
     func setChatConfig(chatId: String, config: ChatConfig) {
         if let demo {
             if let ix = demo.chats.firstIndex(where: { $0.id == chatId }) {

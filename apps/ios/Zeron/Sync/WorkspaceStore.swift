@@ -455,6 +455,20 @@ final class WorkspaceStore {
         afterLocalWrite()
     }
 
+    /// Shelf header "Clear archived": tombstone every archived chat in the
+    /// shelf's current scope, in ONE batch — the server applies it atomically,
+    /// so the shelf empties as a single update rather than row by row.
+    ///
+    /// Desktop routes the same action through the engine's `clearArchivedChats`
+    /// Mutate op. The phone writes rows directly, like every other chat
+    /// mutation here, so a clear still works with no engine reachable.
+    func clearArchived(in spaceId: String? = nil) {
+        let keys = archivedClearKeys(chats: chats, spaceId: spaceId)
+        guard !keys.isEmpty else { return }
+        doc.deleteRows(keys)
+        afterLocalWrite()
+    }
+
     /// Hard-delete a space and cascade to its chats: ONE batch tombstones the
     /// space row and every chat/session row whose spaceId matches — the
     /// server applies the batch atomically.
@@ -476,4 +490,13 @@ final class WorkspaceStore {
         doc.write(kind: "chats", id: chatId, op: .update, set: set)
         afterLocalWrite()
     }
+}
+
+/// Rows a "Clear archived" takes: the chat row and its session row, for every
+/// archived chat in scope. Same filter as `archivedChats(in:)`, so the button
+/// can never clear a session the shelf is not showing. Pure.
+func archivedClearKeys(chats: [Chat], spaceId: String?) -> [(kind: String, id: String)] {
+    chats
+        .filter { $0.archived && (spaceId == nil || $0.spaceId == spaceId) }
+        .flatMap { [(kind: "chats", id: $0.id), (kind: "sessions", id: $0.id)] }
 }
