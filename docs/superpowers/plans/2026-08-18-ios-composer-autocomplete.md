@@ -1097,7 +1097,7 @@ struct ComposerText: Equatable {
     }
 
     private func intersectsMention(_ range: Range<Int>) -> Bool {
-        for (lower, upper, _) in mentionRuns() where range.lowerBound < upper && lower < range.upperBound {
+        for (lower, upper) in mentionRuns() where range.lowerBound < upper && lower < range.upperBound {
             return true
         }
         return false
@@ -1109,11 +1109,18 @@ struct ComposerText: Equatable {
     /// mention run becomes the canonical link built from its ATTRIBUTE.
     func markdown() -> String {
         var out = ""
-        for run in attributed.runs {
-            if let mention = run[MentionAttribute.self] {
+        // Iterate the MENTION-KEYED run view, never `attributed.runs`. The plain
+        // view splits at EVERY attribute boundary, so an unrelated attribute
+        // landing on part of a chip — the iOS 26 editor's own formatting menu can
+        // underline half a chip, and pasted styled text does it too — breaks one
+        // chip into several runs that each carry the same value. This loop would
+        // then emit the same link once per fragment. The keyed view coalesces
+        // them back into a single slice.
+        for (mention, range) in attributed.runs[MentionAttribute.self] {
+            if let mention {
                 out += MentionLink.serialize(path: mention.path, isDir: mention.isDir)
             } else {
-                out += String(attributed[run.range].characters)
+                out += String(attributed[range].characters)
             }
         }
         return out
@@ -1139,22 +1146,26 @@ struct ComposerText: Equatable {
         var doomed: [Range<AttributedString.Index>] = []
         var offset = 0
 
-        for run in attributed.runs {
-            let visible = String(attributed[run.range].characters)
-            guard let mention = run[MentionAttribute.self] else {
+        // Keyed run view, for the same reason as `markdown()`: a chip split by
+        // an unrelated attribute must be judged as ONE mention, or clause 1 fails
+        // on every fragment and a visually intact chip dies for no reason.
+        for (mention, range) in attributed.runs[MentionAttribute.self] {
+            let visible = String(attributed[range].characters)
+            guard let mention else {
                 offset += visible.count
                 continue
             }
 
             let link = MentionLink.serialize(path: mention.path, isDir: mention.isDir)
+            let expected = offset..<(offset + link.count)
             let clauseOne = visible == "@" + MentionLink.basename(of: mention.path)
-            let clauseTwo = parsed.contains {
-                $0.range == offset..<(offset + link.count)
-                    && $0.path == mention.path
-                    && $0.isDir == mention.isDir
+            let clauseTwo = parsed.contains { candidate in
+                candidate.range == expected
+                    && candidate.path == mention.path
+                    && candidate.isDir == mention.isDir
             }
             if !clauseOne || !clauseTwo {
-                doomed.append(run.range)
+                doomed.append(range)
             }
             offset += link.count
         }
@@ -1187,8 +1198,11 @@ struct ComposerText: Equatable {
         selection = AttributedTextSelection(insertionPoint: attributed.startIndex)
     }
 
-    /// Every text mutation goes through here so the selection survives the edit
-    /// and the invariant is re-checked exactly once per change.
+    /// Every text mutation goes through here so the invariant is re-checked
+    /// exactly once per change. `transform(updating:)` keeps `selection` valid
+    /// across the edit; the final caret is then placed deliberately after the
+    /// inserted text, so that assignment — not the `updating:` argument — is what
+    /// determines where the caret ends up.
     private mutating func replace(_ range: Range<Int>, with replacement: AttributedString,
                                   selection: inout AttributedTextSelection) {
         let count = attributed.characters.count
@@ -1209,16 +1223,17 @@ struct ComposerText: Equatable {
 
     // MARK: Helpers
 
-    /// (lowerOffset, upperOffset, value) for each attributed mention run.
-    private func mentionRuns() -> [(Int, Int, MentionValue)] {
-        var out: [(Int, Int, MentionValue)] = []
-        for run in attributed.runs {
-            guard let mention = run[MentionAttribute.self] else { continue }
+    /// (lowerOffset, upperOffset) for each mention span. The keyed view keeps a
+    /// chip that an unrelated attribute has split reported as one span, so the
+    /// trigger veto covers the whole chip rather than one fragment of it.
+    private func mentionRuns() -> [(Int, Int)] {
+        var out: [(Int, Int)] = []
+        for (mention, range) in attributed.runs[MentionAttribute.self] where mention != nil {
             let lower = attributed.characters.distance(from: attributed.startIndex,
-                                                       to: run.range.lowerBound)
+                                                       to: range.lowerBound)
             let upper = attributed.characters.distance(from: attributed.startIndex,
-                                                       to: run.range.upperBound)
-            out.append((lower, upper, mention))
+                                                       to: range.upperBound)
+            out.append((lower, upper))
         }
         return out
     }
@@ -2094,15 +2109,24 @@ In `ComposerView.body`, wrap the existing `ComposerShell(...)` call in a `ZStack
 Add this above the `ComposerShell` call inside the enclosing `VStack`:
 
 ```swift
+            // `isLoading` belongs in this gate. Without it, a first query against
+            // a cold cache has no items and no error, so the popover stays hidden
+            // and ComposerPopover's "Loading…" / "Searching files…" states are
+            // unreachable — the user gets no feedback at all while the host is
+            // being asked.
             if let trigger = text.trigger(at: selection),
-               !suggestions.items.isEmpty || suggestions.errorText != nil {
+               !suggestions.items.isEmpty || suggestions.errorText != nil || suggestions.isLoading {
                 ComposerPopover(items: suggestions.items,
                                 kind: trigger.kind,
                                 isLoading: suggestions.isLoading,
                                 errorText: suggestions.errorText) { item in
                     pick(item, over: trigger.range)
                 }
-                .padding(.horizontal, 16)
+                // 10, not 16: ComposerShell narrows its own margins to 10 while
+                // focused (ComposerView.swift:68), and the popover only ever shows
+                // while focused. 16 would leave its edges visibly inset from the
+                // pill directly beneath it.
+                .padding(.horizontal, 10)
                 .transition(.opacity)
             }
 ```
