@@ -5,6 +5,9 @@
 // invariant" section.
 
 import XCTest
+// AttributedTextSelection is a SwiftUI type, and `@testable import` does not
+// re-export the module's own imports. Without this the test file will not
+// compile.
 import SwiftUI
 @testable import Zeron
 
@@ -96,6 +99,25 @@ final class ComposerTextTests: XCTestCase {
         var selection = AttributedTextSelection(insertionPoint: text.attributed.startIndex)
         text.apply(path: "../secret", isDir: false, over: 0..<0, selection: &selection)
         XCTAssertEqual(text.markdown(), "@secret ")
+    }
+
+    // MARK: Run splitting
+
+    func testAnUnrelatedAttributeSplittingAChipDoesNotDuplicateItsLink() {
+        var text = draftWithChip()          // "see @a.rs "
+        // Colour two characters in the middle of the chip. Foundation's plain
+        // `runs` view splits at that boundary; the mention-keyed view must not.
+        // Iterating the plain view emits the link once PER FRAGMENT, and clause 1
+        // then fails on every fragment and kills a visually intact chip.
+        let start = text.attributed.index(text.attributed.startIndex, offsetByCharacters: 6)
+        let end = text.attributed.index(text.attributed.startIndex, offsetByCharacters: 8)
+        text.attributed[start..<end].foregroundColor = .red
+
+        XCTAssertEqual(text.markdown(), "see [a.rs](zeron-file:a.rs) ",
+                       "a split chip must serialize to ONE link, not one per fragment")
+        text.enforceInvariant()
+        XCTAssertEqual(text.markdown(), "see [a.rs](zeron-file:a.rs) ",
+                       "a visually intact chip must survive an unrelated attribute")
     }
 
     // MARK: Trigger veto
