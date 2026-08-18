@@ -59,6 +59,10 @@ actor ChatRoomClient {
         var applyCheckpoint: @MainActor @Sendable (Data, UInt64) -> Bool
         var applyRow: @MainActor @Sendable (Data, UInt64) -> Void
         var advanceCursor: @MainActor @Sendable (UInt64) -> Void
+        /// Cursor amnesty: lower the cursor to the checkpoint seq (no-op if
+        /// already at or below). See the once-per-session clamp in
+        /// handleState/pullSync.
+        var clampCursor: @MainActor @Sendable (UInt64) -> Void
         var event: @MainActor @Sendable (ChatRoomEvent) -> Void
     }
 
@@ -98,6 +102,9 @@ actor ChatRoomClient {
     /// queue behind the blob), and discarding the bytes on every redial
     /// looped a fresh-chat open forever (NLC Edge, 2026-08-17).
     private var fetchInFlight = false
+    /// Once-per-client cursor amnesty (see handleState): a cursor above the
+    /// room's checkpoint is re-verified by refetching the rows above it.
+    private var cursorAmnestyDone = false
     /// Partial download preserved across fetch attempts (Range-resumed).
     private var partialCheckpoint = Data()
     private var partialCheckpointSeq: String?
@@ -166,10 +173,16 @@ actor ChatRoomClient {
         // Push first, so a message typed on dead wifi leaves the device on
         // this cycle rather than the next.
         for push in pending {
-            guard var request = await pushRequest(push.batchId) else { break }
+            guard var request = await pushRequest(push.batchId) else {
+                roomLog.warning("chat2 \(self.chatId, privacy: .public): http push skipped — no URL (token unavailable)")
+                break
+            }
             request.httpBody = push.bytes
             guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  let http = response as? HTTPURLResponse else { break }
+                  let http = response as? HTTPURLResponse else {
+                roomLog.warning("chat2 \(self.chatId, privacy: .public): http push transport error; will retry")
+                break
+            }
             if http.statusCode == 200,
                let ack = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let seq = (ack["seq"] as? NSNumber)?.uint64Value {
@@ -187,13 +200,24 @@ actor ChatRoomClient {
                 roomLog.error("chat2 \(self.chatId, privacy: .public): http push rejected (\(code, privacy: .public)); retiring batch")
                 pending.removeAll { $0.batchId == push.batchId }
             } else {
+                roomLog.warning("chat2 \(self.chatId, privacy: .public): http push http=\(http.statusCode); will retry")
                 break  // quota/transient/middlebox: retry next cycle
             }
         }
         let after = await delegate.cursor()
-        guard let request = await rowsRequest(after) else { return }
-        guard let (body, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+        guard let request = await rowsRequest(after) else {
+            roomLog.warning("chat2 \(self.chatId, privacy: .public): http pull skipped — no URL (token unavailable)")
+            return
+        }
+        let fetched = try? await URLSession.shared.data(for: request)
+        guard let (body, response) = fetched, let http = response as? HTTPURLResponse else {
+            roomLog.warning("chat2 \(self.chatId, privacy: .public): http pull transport error; will retry")
+            return
+        }
+        guard http.statusCode == 200 else {
+            roomLog.warning("chat2 \(self.chatId, privacy: .public): http pull http=\(http.statusCode); will retry")
+            return
+        }
         // u32-LE length-prefixed frames: state first, then rows, rowsDone.
         var frames: [ChatWireFrame] = []
         var off = 0
@@ -209,23 +233,36 @@ actor ChatRoomClient {
             off += len
         }
         guard let stateFrame = frames.first, stateFrame.kind == ChatFrameType.state,
-              let state = ChatStateHeader(stateFrame.header) else { return }
+              let state = ChatStateHeader(stateFrame.header) else {
+            roomLog.error("chat2 \(self.chatId, privacy: .public): http pull body malformed (\(body.count)B, \(frames.count) frames)")
+            return
+        }
+        if !cursorAmnestyDone, state.checkpointSize > 0 {
+            cursorAmnestyDone = true
+            await delegate.clampCursor(state.checkpointSeq)
+        }
+        let planAfter = await delegate.cursor()
         var contained = state.checkpointSize == 0
         if !contained {
             contained = await delegate.containsFrontier(stateFrame.payload)
         }
-        if case .checkpointThenRows = chatPlanCatchUp(cursor: after, state: state,
+        if case .checkpointThenRows = chatPlanCatchUp(cursor: planAfter, state: state,
                                                       frontierContained: contained) {
-            // The local doc lacks the checkpoint's frontier — fetch it over
-            // HTTPS first (Range-resumed, shared with the socket path via
-            // fetchInFlight) so the rows below land on their base.
-            guard !fetchInFlight else { return }
+            // The local doc lacks the checkpoint's frontier. Route through
+            // completeCheckpointFetch — NOT an inline fetch: the socket
+            // handshake may race this pull, see fetchInFlight set, skip its
+            // own fetch, and arm checkpointBuffer expecting the completion
+            // path to drain it. An inline fetch satisfied the guard but
+            // never drained, stranding every socket row in the buffer until
+            // the backfill deadline ("chat frozen", 2026-08-18).
+            guard !fetchInFlight else { return }  // socket's fetch owns it
             fetchInFlight = true
-            let bytes = await fetchCheckpoint()
-            fetchInFlight = false
-            checkpointProgressAt = nil
-            guard let bytes, !closed,
-                  await delegate.applyCheckpoint(bytes, state.checkpointSeq) else { return }
+            await completeCheckpointFetch(seq: state.checkpointSeq)
+            guard !closed else { return }
+            guard await delegate.containsFrontier(stateFrame.payload) else {
+                roomLog.warning("chat2 \(self.chatId, privacy: .public): http pull — frontier still missing after checkpoint; will retry")
+                return
+            }
         }
         guard !closed else { return }
         for frame in frames.dropFirst()
@@ -539,7 +576,16 @@ actor ChatRoomClient {
         if !contained {
             contained = await delegate.containsFrontier(frame.payload)
         }
-        let plan = chatPlanCatchUp(cursor: cursor, state: state, frontierContained: contained)
+        // Cursor amnesty, once per client: a cursor above the checkpoint seq
+        // claims history the doc may have silently parked and dropped (the
+        // "Add Tweets" wedge). Clamp and refetch — no-op re-imports, KB cost,
+        // converts a lying cursor into a true one.
+        if !cursorAmnestyDone, state.checkpointSize > 0 {
+            cursorAmnestyDone = true
+            await delegate.clampCursor(state.checkpointSeq)
+        }
+        let planCursor = await delegate.cursor()
+        let plan = chatPlanCatchUp(cursor: planCursor, state: state, frontierContained: contained)
         stateReceived = true
         let after: UInt64
         switch plan {
