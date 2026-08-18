@@ -180,19 +180,56 @@ struct ComposerShell<Chips: View>: View {
     /// from hard newlines only and left wrapped growth unsolved. `Text` wraps at
     /// the same width with the same font, so its height IS the wrapped height.
     ///
-    /// Known imprecision, in the safe direction: chips render at mono 15 in the
-    /// editor while the mirror measures everything at 16, so a chip-heavy line
-    /// is over-measured slightly. Over-measuring adds a hair of padding; the
-    /// opposite would clip the last line.
+    /// Three details here are load-bearing, and each one silently breaks growth
+    /// if it is dropped:
+    ///
+    /// `.fixedSize(horizontal: false, vertical: true)` — `.background` proposes
+    /// the PRIMARY view's size to its content, so without this the mirror is
+    /// proposed `clampedHeight` and can report exactly that back, pinning
+    /// `measuredHeight` at one line and freezing the editor forever. The file
+    /// already uses this modifier for the same reason at the question panel.
+    ///
+    /// `.padding(.horizontal, 5)` — the editor wraps at its frame width MINUS
+    /// its own text inset; a mirror with no inset wraps a character or two
+    /// later, so at every wrap boundary the editor has a line the mirror has not
+    /// counted. With `scrollDisabled` true in that window, the new line and the
+    /// caret are clipped. Insetting the mirror over-measures instead, which is
+    /// the harmless direction.
+    ///
+    /// Per-line height is over-measured too (chips render at mono 15, the mirror
+    /// measures everything at sans 16), and that is also harmless. Note the
+    /// width bias runs the OTHER way — mono advances are wider than the
+    /// proportional average, so a chip-heavy line wraps earlier in the editor
+    /// than in the mirror. The horizontal inset above is what absorbs that.
     private var heightMirror: some View {
-        Text(draft.plainText.isEmpty ? " " : draft.plainText)
+        Text(mirroredText)
             .font(Theme.sans(16))
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 5)
             .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .hidden()
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                 measuredHeight = height
             }
+    }
+
+    /// What the mirror measures, with two deliberate distortions.
+    ///
+    /// A trailing newline gets a sentinel space. TextKit gives the editor an
+    /// extra line fragment for a trailing paragraph break and SwiftUI `Text`
+    /// does not, so pressing Return at the end of a draft would measure the same
+    /// height as before: the frame would not grow, and the caret would sit
+    /// inside a scroll-disabled clip until the next keystroke. Return is the
+    /// explicit "I want another line" gesture, so this is the most visible of
+    /// the mirror's failure modes.
+    ///
+    /// An empty draft measures a single space, so the collapsed pill is one line
+    /// tall rather than zero.
+    private var mirroredText: String {
+        let plain = draft.plainText
+        if plain.isEmpty { return " " }
+        return plain.hasSuffix("\n") ? plain + " " : plain
     }
 
     /// THE ONLY PATH USER TYPING TAKES. `ComposerText.apply(…)` enforces the
@@ -329,48 +366,53 @@ struct ComposerView: View {
                     .padding(.horizontal, 24)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            ZStack(alignment: .bottom) {
-                // `isLoading` belongs in this gate. Without it, a first query against
-                // a cold cache has no items and no error, so the popover stays hidden
-                // and ComposerPopover's "Loading…" / "Searching files…" states are
-                // unreachable — the user gets no feedback at all while the host is
-                // being asked.
-                if let trigger = text.trigger(at: selection),
-                   !suggestions.items.isEmpty || suggestions.errorText != nil || suggestions.isLoading {
-                    ComposerPopover(items: suggestions.items,
-                                    kind: trigger.kind,
-                                    isLoading: suggestions.isLoading,
-                                    errorText: suggestions.errorText) { item in
-                        pick(item, over: trigger.range)
-                    }
-                    // 10, not 16: ComposerShell narrows its own margins to 10 while
-                    // focused (ComposerView.swift:68), and the popover only ever shows
-                    // while focused. 16 would leave its edges visibly inset from the
-                    // pill directly beneath it.
-                    .padding(.horizontal, 10)
-                    .transition(.opacity)
+            // `isLoading` belongs in this gate. Without it, a first query against
+            // a cold cache has no items and no error, so the popover stays hidden
+            // and ComposerPopover's "Loading…" / "Searching files…" states are
+            // unreachable — the user gets no feedback at all while the host is
+            // being asked.
+            //
+            // A SIBLING in this VStack, not a ZStack over ComposerShell:
+            // ZStack(alignment: .bottom) aligns both children's bottom edges and
+            // draws the later one (the pill) in front, so the pill would cover the
+            // popover completely at one to three rows and swallow taps on every
+            // covered row through its own contentShape. The VStack's 6pt spacing
+            // is the gap the two glass surfaces want anyway.
+            if let trigger = text.trigger(at: selection),
+               !suggestions.items.isEmpty || suggestions.errorText != nil || suggestions.isLoading {
+                ComposerPopover(items: suggestions.items,
+                                kind: trigger.kind,
+                                isLoading: suggestions.isLoading,
+                                errorText: suggestions.errorText) { item in
+                    pick(item, over: trigger.range)
                 }
-                ComposerShell(
-                    draft: $text,
-                    selection: $selection,
-                    sendEnabled: true,
-                    showStop: runLive,
-                    busy: uploading,
-                    keepExpanded: showModelPicker || showTraitPicker,
-                    onSend: send,
-                    onStop: { store.sendInterrupt() },
-                    attachments: attachments,
-                    onAttach: { showPicker = true },
-                    onRemoveAttachment: { id in attachments.removeAll { $0.id == id } },
-                    autoFocus: model.launchFocusComposer
-                ) {
-                    ComposerChip(label: currentModel.label, badgeHarness: harness) {
-                        showModelPicker = true
-                    }
-                    if let currentReasoning {
-                        ComposerChip(label: HarnessCatalog.reasoningLabel(currentReasoning)) {
-                            showTraitPicker = true
-                        }
+                // 10, not 16: ComposerShell narrows its own margins to 10 while
+                // focused (ComposerView.swift:68), and the popover only ever shows
+                // while focused. 16 would leave its edges visibly inset from the
+                // pill directly beneath it.
+                .padding(.horizontal, 10)
+                .transition(.opacity)
+            }
+            ComposerShell(
+                draft: $text,
+                selection: $selection,
+                sendEnabled: true,
+                showStop: runLive,
+                busy: uploading,
+                keepExpanded: showModelPicker || showTraitPicker,
+                onSend: send,
+                onStop: { store.sendInterrupt() },
+                attachments: attachments,
+                onAttach: { showPicker = true },
+                onRemoveAttachment: { id in attachments.removeAll { $0.id == id } },
+                autoFocus: model.launchFocusComposer
+            ) {
+                ComposerChip(label: currentModel.label, badgeHarness: harness) {
+                    showModelPicker = true
+                }
+                if let currentReasoning {
+                    ComposerChip(label: HarnessCatalog.reasoningLabel(currentReasoning)) {
+                        showTraitPicker = true
                     }
                 }
             }
@@ -406,8 +448,13 @@ struct ComposerView: View {
             )
         }
         .task(id: "\(chat.id)/\(harness)") {
-            guard let space = model.space(for: chat) else { return }
-            catalogs[harness] = await model.listModels(space: space, harness: harness)
+            // Wire the fetchers FIRST, before the guard and before any await.
+            // `listModels` is an RPC to the host and can stall for seconds when
+            // the device is offline. If the user types `/` in that window, the
+            // default no-op fetcher returns [] and ComposerSuggestions caches
+            // that empty list under the real key — permanently, for the life of
+            // the view. Every later `/` then silently shows nothing.
+            //
             // AppModel.workspace is Optional (AppModel.swift:21): signed out or
             // in demo mode there is no store, and so no suggestions.
             suggestions.fetchCommands = { [weak model] harness, device, cwd in
@@ -421,9 +468,12 @@ struct ComposerView: View {
                                                    spaceId: context.spaceId,
                                                    query: query)
             }
+
+            guard let space = model.space(for: chat) else { return }
+            catalogs[harness] = await model.listModels(space: space, harness: harness)
         }
-        .onChange(of: text) { _, _ in Task { await refreshSuggestions() } }
-        .onChange(of: selection) { _, _ in Task { await refreshSuggestions() } }
+        .onChange(of: text) { _, _ in scheduleRefresh() }
+        .onChange(of: selection) { _, _ in scheduleRefresh() }
         .onAppear {
             if model.launchSheet == "config" {
                 model.launchSheet = nil
@@ -458,6 +508,23 @@ struct ComposerView: View {
         guard let context = suggestionContext,
               let trigger = text.trigger(at: selection) else { return }
         await suggestions.update(trigger: trigger, context: context)
+    }
+
+    @State private var refreshTask: Task<Void, Never>?
+
+    /// Debounce and cancel, for two reasons. One keystroke changes BOTH `text`
+    /// and `selection`, so without this every character fires two refreshes and
+    /// two `SearchFiles` RPCs, one of which the generation guard always throws
+    /// away. And an un-cancelled `Task` per keystroke lets a fast typist queue
+    /// an unbounded number of them. The desktop debounces the same way
+    /// (crates/ui/src/composer.rs:3871-3876).
+    private func scheduleRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            await refreshSuggestions()
+        }
     }
 
     /// Merge a model/effort change into the chat's config row (LWW; the host
