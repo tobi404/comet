@@ -1635,6 +1635,12 @@ final class ComposerSuggestions {
     var fetchPaths: (_ context: SuggestionContext, _ query: String) async throws -> [FileSearchMatch] = { _, _ in [] }
 
     private var commandCache: [CommandKey: [SlashCommand]] = [:]
+    /// The kind the current `items` belong to. Switching kinds must clear them:
+    /// otherwise the popover reopens instantly with the PREVIOUS kind's rows
+    /// under the new kind's header, and keeps them — tappable — for the whole
+    /// RPC round trip. `isLoading` does not mask it, because ComposerPopover
+    /// only shows its loading line when `items` is empty.
+    private var lastKind: TriggerKind?
     /// The token the user closed the popover on: its span AND its full text.
     /// Keyed on both because a caret move inside a dismissed token must keep it
     /// closed, while any edit reopens it (composer.rs:3301-3304). The span alone
@@ -1661,6 +1667,11 @@ final class ComposerSuggestions {
             return
         }
         dismissed = nil
+
+        if lastKind != trigger.kind {
+            items = []
+        }
+        lastKind = trigger.kind
 
         generation += 1
         let mine = generation
@@ -2173,7 +2184,14 @@ Replace line 212:
 
 - [ ] **Step 2: Wire the fetchers and the popover**
 
-In `ComposerView.body`, wrap the existing `ComposerShell(...)` call in a `ZStack(alignment: .bottom)` overlay so the popover floats above the pill. Add `selection: $selection` to the `ComposerShell` call and change `draft: $text` to stay as-is (the type changed under it).
+In `ComposerView.body`, add the popover as a SIBLING of `ComposerShell` inside the enclosing
+`VStack(spacing: 6)`, immediately before it. Add `selection: $selection` to the `ComposerShell`
+call; `draft: $text` stays as written (its type changed under it).
+
+**Do NOT use a `ZStack`.** `ZStack(alignment: .bottom)` aligns both children's bottom edges and
+draws later children in front, so the pill would cover the popover completely at one to three
+rows and swallow taps on every covered row through its own `contentShape`. A `VStack` sibling
+stacks them, and its 6pt spacing is the gap the two glass surfaces want anyway.
 
 Add this above the `ComposerShell` call inside the enclosing `VStack`:
 
@@ -2236,8 +2254,13 @@ Wire the fetchers once, in the existing `.task(id:)` modifier at line 305:
 
 ```swift
         .task(id: "\(chat.id)/\(harness)") {
-            guard let space = model.space(for: chat) else { return }
-            catalogs[harness] = await model.listModels(space: space, harness: harness)
+            // Wire the fetchers FIRST, before the guard and before any await.
+            // `listModels` is an RPC to the host and can stall for seconds when
+            // the device is offline. If the user types `/` in that window, the
+            // default no-op fetcher returns [] and ComposerSuggestions caches
+            // that empty list under the real key — permanently, for the life of
+            // the view. Every later `/` then silently shows nothing.
+            //
             // AppModel.workspace is Optional (AppModel.swift:21): signed out or
             // in demo mode there is no store, and so no suggestions.
             suggestions.fetchCommands = { [weak model] harness, device, cwd in
@@ -2251,14 +2274,38 @@ Wire the fetchers once, in the existing `.task(id:)` modifier at line 305:
                                                    spaceId: context.spaceId,
                                                    query: query)
             }
+
+            guard let space = model.space(for: chat) else { return }
+            catalogs[harness] = await model.listModels(space: space, harness: harness)
         }
 ```
 
 Add the refresh trigger next to the other modifiers:
 
 ```swift
-        .onChange(of: text) { _, _ in Task { await refreshSuggestions() } }
-        .onChange(of: selection) { _, _ in Task { await refreshSuggestions() } }
+        .onChange(of: text) { _, _ in scheduleRefresh() }
+        .onChange(of: selection) { _, _ in scheduleRefresh() }
+```
+
+And add, next to `refreshSuggestions()`:
+
+```swift
+    @State private var refreshTask: Task<Void, Never>?
+
+    /// Debounce and cancel, for two reasons. One keystroke changes BOTH `text`
+    /// and `selection`, so without this every character fires two refreshes and
+    /// two `SearchFiles` RPCs, one of which the generation guard always throws
+    /// away. And an un-cancelled `Task` per keystroke lets a fast typist queue
+    /// an unbounded number of them. The desktop debounces the same way
+    /// (crates/ui/src/composer.rs:3871-3876).
+    private func scheduleRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            await refreshSuggestions()
+        }
+    }
 ```
 
 `AttributedTextSelection` is `Equatable` (`SwiftUI.swiftinterface:14628`), so `.onChange(of: selection)` compiles. If the `[weak model]` capture fights strict concurrency, capture the `WorkspaceStore` itself instead — it is already resolved inside this `.task`.
