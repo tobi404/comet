@@ -14,7 +14,8 @@ import SwiftUI
 /// Shared glass shell + input + action row. `chips` render in the expanded
 /// toolbar row between the attach and send circles.
 struct ComposerShell<Chips: View>: View {
-    @Binding var draft: String
+    @Binding var draft: ComposerText
+    @Binding var selection: AttributedTextSelection
     var placeholder = "Message"
     var sendEnabled: Bool
     var showStop: Bool
@@ -40,10 +41,11 @@ struct ComposerShell<Chips: View>: View {
     @ViewBuilder var chips: Chips
 
     @FocusState private var focused: Bool
+    @State private var measuredHeight: CGFloat = 22
 
     private var expanded: Bool {
         alwaysExpanded || keepExpanded || focused || !attachments.isEmpty
-            || draft.contains("\n") || draft.count > 26
+            || draft.plainText.contains("\n") || draft.plainText.count > 26
     }
 
     /// One animatable shape for background/glass/hairline: capsule-radius
@@ -55,7 +57,7 @@ struct ComposerShell<Chips: View>: View {
     // Switching between VStack/HStack via AnyLayout (rather than an if/else
     // that swaps container types) keeps `input`'s view identity stable across
     // the compact↔expanded flip — an if/else here would tear down and rebuild
-    // the TextField, dropping keyboard focus mid-type.
+    // the TextEditor, dropping keyboard focus mid-type.
     private var shellLayout: AnyLayout {
         expanded
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
@@ -117,7 +119,7 @@ struct ComposerShell<Chips: View>: View {
         .background(whiteAlpha(0.04), in: surfaceShape)
         .glassEffect(.regular.interactive(), in: surfaceShape)
         .overlay(surfaceShape.strokeBorder(whiteAlpha(0.05), lineWidth: 1))
-        // The whole glass surface focuses the editor, not just the TextField's
+        // The whole glass surface focuses the editor, not just the TextEditor's
         // own text box: the collapsed pill is mostly padding, and a tap that
         // misses the text box falls through to the transcript underneath —
         // whose tap-to-blur then RESIGNS the keyboard. That's the "have to
@@ -129,13 +131,91 @@ struct ComposerShell<Chips: View>: View {
                  including: focused ? .subviews : .all)
     }
 
+    // TextEditor, not TextField: only the AttributedString overload can carry
+    // mention chips (iOS 26+). It gives up three things TextField had, so each
+    // is rebuilt here: the placeholder is an overlay, the 1...7 line limit is
+    // an explicit height range, and the opaque background is hidden so the
+    // glass shows through.
     private var input: some View {
-        TextField(placeholder, text: $draft, axis: .vertical)
+        TextEditor(text: editorText, selection: $selection)
             .font(Theme.sans(16))
             .foregroundStyle(Theme.text)
             .tint(Theme.text)
-            .lineLimit(1...7)
+            .attributedTextFormattingDefinition(MentionFormatting())
+            .scrollContentBackground(.hidden)
+            .frame(height: clampedHeight)
+            .scrollDisabled(measuredHeight <= lineHeight * 7)
             .focused($focused)
+            .background(alignment: .topLeading) { heightMirror }
+            .overlay(alignment: .topLeading) {
+                if draft.isEmpty {
+                    Text(placeholder)
+                        .font(Theme.sans(16))
+                        .foregroundStyle(Theme.textFaint)
+                        .padding(.leading, 4)
+                        .padding(.top, 8)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+
+    /// One line of the composer font, used to bound the editor's growth the way
+    /// `lineLimit(1...7)` used to.
+    private var lineHeight: CGFloat { 22 }
+
+    private var clampedHeight: CGFloat {
+        min(max(measuredHeight, lineHeight), lineHeight * 7)
+    }
+
+    /// Height measurement, taken from a hidden `Text` MIRROR rather than from
+    /// the editor's own content size.
+    ///
+    /// This distinction is the whole point. The editor's content height depends
+    /// on the frame we set from it, so reading one to set the other makes them
+    /// chase each other — the oscillation this file's own comments already warn
+    /// about. A mirror's height depends only on the text and the available
+    /// width, never on the frame we apply to the editor, so the loop is broken.
+    ///
+    /// It is also what solves WRAPPING. The Task 0 spike verified 1-to-7 growth
+    /// from hard newlines only and left wrapped growth unsolved. `Text` wraps at
+    /// the same width with the same font, so its height IS the wrapped height.
+    ///
+    /// Known imprecision, in the safe direction: chips render at mono 15 in the
+    /// editor while the mirror measures everything at 16, so a chip-heavy line
+    /// is over-measured slightly. Over-measuring adds a hair of padding; the
+    /// opposite would clip the last line.
+    private var heightMirror: some View {
+        Text(draft.plainText.isEmpty ? " " : draft.plainText)
+            .font(Theme.sans(16))
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.vertical, 8)
+            .hidden()
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                measuredHeight = height
+            }
+    }
+
+    /// THE ONLY PATH USER TYPING TAKES. `ComposerText.apply(…)` enforces the
+    /// invariant for programmatic picks, but a keystroke never goes through it
+    /// — the text view writes straight to the binding. Without this setter, a
+    /// chip typed into would keep its attribute on device while the unit tests
+    /// still passed, because those drive `apply` instead.
+    ///
+    /// Enforcing here rather than in an `.onChange` is deliberate: mutating the
+    /// binding from inside its own change notification is the re-entrancy the
+    /// `clearDraft` comment warns about. The pass settles in one step — a run
+    /// that has already lost its attribute is no longer a mention run, so a
+    /// second pass finds nothing to strip.
+    private var editorText: Binding<AttributedString> {
+        Binding(
+            get: { draft.attributed },
+            set: { next in
+                var updated = draft
+                updated.attributed = next
+                updated.enforceInvariant()
+                draft = updated
+            }
+        )
     }
 
     private var attachButton: some View {
@@ -156,7 +236,8 @@ struct ComposerShell<Chips: View>: View {
 
     /// Attachments count as content: an image-only send is a send, never a stop.
     private var hasContent: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
+        !draft.plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.isEmpty
     }
 
     private var actionButton: some View {
