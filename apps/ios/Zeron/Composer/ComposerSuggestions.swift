@@ -54,6 +54,12 @@ final class ComposerSuggestions {
     var fetchPaths: (_ context: SuggestionContext, _ query: String) async throws -> [FileSearchMatch] = { _, _ in [] }
 
     private var commandCache: [CommandKey: [SlashCommand]] = [:]
+    /// The kind the current `items` belong to. Switching kinds must clear them:
+    /// otherwise the popover reopens instantly with the PREVIOUS kind's rows
+    /// under the new kind's header, and keeps them — tappable — for the whole
+    /// RPC round trip. `isLoading` does not mask it, because ComposerPopover
+    /// only shows its loading line when `items` is empty.
+    private var lastKind: TriggerKind?
     /// The token the user closed the popover on: its span AND its full text.
     /// Keyed on both because a caret move inside a dismissed token must keep it
     /// closed, while any edit reopens it (composer.rs:3301-3304). The span alone
@@ -80,6 +86,11 @@ final class ComposerSuggestions {
             return
         }
         dismissed = nil
+
+        if lastKind != trigger.kind {
+            items = []
+        }
+        lastKind = trigger.kind
 
         generation += 1
         let mine = generation
