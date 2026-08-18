@@ -38,6 +38,8 @@ struct ComposerShell<Chips: View>: View {
     /// Screenshot rig (-focuscomposer): take keyboard focus shortly after
     /// appearing, so the keyboard-up transcript states can be driven headless.
     var autoFocus = false
+    /// Reports focus changes out, so a caller can close floating UI on blur.
+    var onFocusChange: (Bool) -> Void = { _ in }
     @ViewBuilder var chips: Chips
 
     @FocusState private var focused: Bool
@@ -77,6 +79,7 @@ struct ComposerShell<Chips: View>: View {
                     focused = true
                 }
             }
+            .onChange(of: focused) { _, now in onFocusChange(now) }
     }
 
     /// The glass surface: collapsed = editor + send in one capsule row;
@@ -339,6 +342,14 @@ struct ComposerView: View {
     @State private var showTraitPicker = false
     /// Live catalog for the chat's harness from its space's device.
     @State private var catalogs: [String: [ModelInfo]] = [:]
+    /// Mirrors ComposerShell's own `@FocusState`, reported out through
+    /// `onFocusChange`. Gates the popover: on desktop, tap-outside blurs the
+    /// editor AND dismisses the mention popup in the same gesture
+    /// (crates/ui/src/composer.rs:3966). SwiftUI has no equivalent of
+    /// `on_mouse_down_out`, so blur is the signal this reaches for instead —
+    /// a tap on the transcript resigns focus, and the popover must follow it
+    /// down rather than floating over a dismissed keyboard.
+    @State private var composerFocused = false
 
     private var harness: String { chat.config?.harness ?? "claude-code" }
 
@@ -366,11 +377,18 @@ struct ComposerView: View {
                     .padding(.horizontal, 24)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // `isLoading` belongs in this gate. Without it, a first query against
-            // a cold cache has no items and no error, so the popover stays hidden
-            // and ComposerPopover's "Loading…" / "Searching files…" states are
-            // unreachable — the user gets no feedback at all while the host is
-            // being asked.
+            // Gate is trigger-open AND focused, nothing about `items` or
+            // `errorText` or `isLoading`. Focus is required so a tap on the
+            // transcript — which blurs the editor without changing the draft,
+            // so the trigger alone would still match — closes the popover the
+            // same way desktop's `.on_mouse_down_out(… dismiss_mention …)`
+            // does (crates/ui/src/composer.rs:3966). Items/error/loading used
+            // to gate visibility too, but that left the zero-match empty state
+            // ("No matching commands.") unreachable — with only a trigger and
+            // focus needed, `scheduleRefresh`'s `beginPending()` call keeps
+            // `isLoading` true through the whole 80ms debounce window, so the
+            // popover shows "Searching files…" rather than flashing the
+            // empty-state line before the first request has even gone out.
             //
             // A SIBLING in this VStack, not a ZStack over ComposerShell:
             // ZStack(alignment: .bottom) aligns both children's bottom edges and
@@ -378,8 +396,7 @@ struct ComposerView: View {
             // popover completely at one to three rows and swallow taps on every
             // covered row through its own contentShape. The VStack's 6pt spacing
             // is the gap the two glass surfaces want anyway.
-            if let trigger = text.trigger(at: selection),
-               !suggestions.items.isEmpty || suggestions.errorText != nil || suggestions.isLoading {
+            if let trigger = text.trigger(at: selection), composerFocused {
                 ComposerPopover(items: suggestions.items,
                                 kind: trigger.kind,
                                 isLoading: suggestions.isLoading,
@@ -405,7 +422,8 @@ struct ComposerView: View {
                 attachments: attachments,
                 onAttach: { showPicker = true },
                 onRemoveAttachment: { id in attachments.removeAll { $0.id == id } },
-                autoFocus: model.launchFocusComposer
+                autoFocus: model.launchFocusComposer,
+                onFocusChange: { composerFocused = $0 }
             ) {
                 ComposerChip(label: currentModel.label, badgeHarness: harness) {
                     showModelPicker = true
@@ -484,14 +502,17 @@ struct ComposerView: View {
 
     /// Everything the fetchers need. The chat's own device hosts the run, so it
     /// is the device to dial: a `chatId` search only works there
-    /// (crates/engine/src/rpc.rs:501-502).
-    private var suggestionContext: SuggestionContext? {
-        guard let space = model.space(for: chat) else { return nil }
-        return SuggestionContext(harness: harness,
-                                 deviceId: space.deviceId,
-                                 cwd: chat.cwd ?? space.path,
-                                 chatId: chat.id,
-                                 spaceId: nil)
+    /// (crates/engine/src/rpc.rs:501-502) — `chat.deviceId`, not the space's,
+    /// is the authority for that, and the engine rejects a `chatId` search
+    /// whose chat does not belong to the dialed device ("chat belongs to
+    /// another device"). Reading it off `space.deviceId` disabled the whole
+    /// feature for any space-less chat, since `space` is Optional.
+    private var suggestionContext: SuggestionContext {
+        SuggestionContext(harness: harness,
+                         deviceId: chat.deviceId,
+                         cwd: chat.cwd ?? model.space(for: chat)?.path ?? "~",
+                         chatId: chat.id,
+                         spaceId: nil)
     }
 
     private func pick(_ item: SuggestionItem, over range: Range<Int>) {
@@ -505,9 +526,8 @@ struct ComposerView: View {
     }
 
     private func refreshSuggestions() async {
-        guard let context = suggestionContext,
-              let trigger = text.trigger(at: selection) else { return }
-        await suggestions.update(trigger: trigger, context: context)
+        guard let trigger = text.trigger(at: selection) else { return }
+        await suggestions.update(trigger: trigger, context: suggestionContext)
     }
 
     @State private var refreshTask: Task<Void, Never>?
@@ -518,8 +538,24 @@ struct ComposerView: View {
     /// away. And an un-cancelled `Task` per keystroke lets a fast typist queue
     /// an unbounded number of them. The desktop debounces the same way
     /// (crates/ui/src/composer.rs:3871-3876).
+    ///
+    /// The trigger check runs SYNCHRONOUSLY here, before any debounce, for two
+    /// reasons that both have to happen on this exact keystroke rather than
+    /// 80ms later:
+    ///   - No trigger: `reset()` drops any stale rows from a trigger that just
+    ///     closed, so a later trigger of the same kind can't reopen onto the
+    ///     previous query's results while the new fetch is in flight.
+    ///   - A trigger: `beginPending()` marks the fetch pending immediately, so
+    ///     the popover's "Loading…" / "Searching files…" state covers the
+    ///     debounce window too, and the empty-state line never flashes between
+    ///     the keystroke and the first request going out.
     private func scheduleRefresh() {
         refreshTask?.cancel()
+        guard text.trigger(at: selection) != nil else {
+            suggestions.reset()
+            return
+        }
+        suggestions.beginPending()
         refreshTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled else { return }

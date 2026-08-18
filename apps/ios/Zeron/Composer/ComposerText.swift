@@ -206,7 +206,10 @@ struct ComposerText: Equatable {
 
     mutating func apply(command: String, over range: Range<Int>,
                         selection: inout AttributedTextSelection) {
-        replace(range, with: AttributedString("/\(command) "), selection: &selection)
+        let suppressed = hasSeparator(after: range.upperBound)
+        let separator = suppressed ? "" : " "
+        replace(range, with: AttributedString("/\(command)\(separator)"),
+               selection: &selection, skipExistingSeparator: suppressed)
     }
 
     mutating func apply(path: String, isDir: Bool, over range: Range<Int>,
@@ -216,8 +219,26 @@ struct ComposerText: Equatable {
             chip[MentionAttribute.self] = MentionValue(path: path, isDir: isDir)
         }
         var replacement = chip
-        replacement.append(AttributedString(" "))
-        replace(range, with: replacement, selection: &selection)
+        let suppressed = hasSeparator(after: range.upperBound)
+        if !suppressed {
+            replacement.append(AttributedString(" "))
+        }
+        replace(range, with: replacement, selection: &selection, skipExistingSeparator: suppressed)
+    }
+
+    /// True when the character right after the replaced range — in the text
+    /// as it stands BEFORE this pick — is whitespace other than a newline.
+    /// Matches the desktop rule exactly, including the newline exclusion
+    /// (crates/ui/src/composer.rs:1483-1489): a pick never doubles up a space
+    /// that is already there, but a hard newline right after the token still
+    /// gets its own trailing space rather than folding onto the next line.
+    private func hasSeparator(after upper: Int) -> Bool {
+        let count = attributed.characters.count
+        let clamped = max(0, min(count, upper))
+        guard clamped < count else { return false }
+        let index = attributed.index(attributed.startIndex, offsetByCharacters: clamped)
+        let ch = attributed.characters[index]
+        return ch.isWhitespace && ch != "\n" && ch != "\r"
     }
 
     mutating func clear(selection: inout AttributedTextSelection) {
@@ -230,8 +251,19 @@ struct ComposerText: Equatable {
     /// across the edit; the final caret is then placed deliberately after the
     /// inserted text, so that assignment — not the `updating:` argument — is what
     /// determines where the caret ends up.
+    ///
+    /// `skipExistingSeparator` is the other half of the desktop's separator
+    /// rule (crates/ui/src/composer.rs:1489): when a pick suppresses its own
+    /// trailing space because one is already there, the caret still lands
+    /// PAST that pre-existing character, not just before it. Landing before
+    /// it would glue the next keystroke onto the token, and — for the picks
+    /// the mention veto does not cover (commands; unsafe paths, which carry
+    /// no attribute) — would leave the caret sitting exactly on the token's
+    /// own trigger boundary, reopening the popover on the pick that just
+    /// resolved it.
     private mutating func replace(_ range: Range<Int>, with replacement: AttributedString,
-                                  selection: inout AttributedTextSelection) {
+                                  selection: inout AttributedTextSelection,
+                                  skipExistingSeparator: Bool = false) {
         let count = attributed.characters.count
         let lower = max(0, min(count, range.lowerBound))
         let upper = max(lower, min(count, range.upperBound))
@@ -243,8 +275,9 @@ struct ComposerText: Equatable {
         }
         enforceInvariant()
 
+        let advance = replacement.characters.count + (skipExistingSeparator ? 1 : 0)
         let caret = attributed.index(attributed.startIndex,
-                                     offsetByCharacters: lower + replacement.characters.count)
+                                     offsetByCharacters: lower + advance)
         selection = AttributedTextSelection(insertionPoint: caret)
     }
 

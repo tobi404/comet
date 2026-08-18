@@ -166,4 +166,55 @@ final class ComposerTextTests: XCTestCase {
         XCTAssertEqual(text.plainText, "/tdd ")
         XCTAssertEqual(text.markdown(), "/tdd ")
     }
+
+    // MARK: Separator suppression (desktop composer.rs:1483-1489)
+
+    /// THE REVIEW'S FAILURE CASE: picking mid-draft used to double the space.
+    func testPathPickDoesNotDoubleAnExistingSeparator() {
+        var text = ComposerText("check @ma out")
+        var selection = AttributedTextSelection(insertionPoint: text.attributed.startIndex)
+        // "@ma" spans offsets 6..<9; a space already sits at offset 9.
+        text.apply(path: "main.rs", isDir: false, over: 6..<9, selection: &selection)
+        XCTAssertEqual(text.plainText, "check @main.rs out")
+    }
+
+    /// A newline right after the token is excluded from the desktop rule, so
+    /// the pick still gets its own trailing space rather than folding onto it.
+    func testPathPickAddsASeparatorBeforeANewline() {
+        var text = ComposerText("check @ma\nout")
+        var selection = AttributedTextSelection(insertionPoint: text.attributed.startIndex)
+        text.apply(path: "main.rs", isDir: false, over: 6..<9, selection: &selection)
+        XCTAssertEqual(text.plainText, "check @main.rs \nout")
+    }
+
+    func testCommandPickDoesNotDoubleAnExistingSeparator() {
+        var text = ComposerText("/td more")
+        var selection = AttributedTextSelection(insertionPoint: text.attributed.startIndex)
+        text.apply(command: "tdd", over: 0..<3, selection: &selection)
+        XCTAssertEqual(text.plainText, "/tdd more")
+    }
+
+    /// A command pick carries no mention attribute, so nothing else stops the
+    /// popover from reopening the instant the caret lands back on the token's
+    /// own trigger boundary. The caret has to clear that boundary — desktop
+    /// does this by landing PAST the separator it declined to duplicate
+    /// (composer.rs:1489's `existing_separator.map(char::len_utf8)`), not just
+    /// before it.
+    func testCommandPickAdvancesTheCaretPastAnExistingSeparatorSoItDoesNotReopen() {
+        var text = ComposerText("/td more")
+        var selection = AttributedTextSelection(insertionPoint: text.attributed.startIndex)
+        text.apply(command: "tdd", over: 0..<3, selection: &selection)
+        XCTAssertNil(text.trigger(at: selection))
+    }
+
+    /// Same rule, for the other case the mention veto does not cover: an
+    /// unsafe path carries no attribute either, so it needs the same caret
+    /// hop as a command pick.
+    func testUnsafePathPickAdvancesTheCaretPastAnExistingSeparatorSoItDoesNotReopen() {
+        var text = ComposerText("open @x more")
+        var selection = AttributedTextSelection(insertionPoint: text.attributed.startIndex)
+        text.apply(path: "../secret", isDir: false, over: 5..<7, selection: &selection)
+        XCTAssertEqual(text.plainText, "open @secret more")
+        XCTAssertNil(text.trigger(at: selection))
+    }
 }

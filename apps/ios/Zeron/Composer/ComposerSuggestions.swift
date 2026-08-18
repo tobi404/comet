@@ -75,7 +75,32 @@ final class ComposerSuggestions {
         isLoading = false
     }
 
+    /// Drop everything. Called when the trigger closes, so a later trigger of
+    /// the same kind cannot reopen onto the previous query's rows.
+    func reset() {
+        items = []
+        errorText = nil
+        isLoading = false
+        lastKind = nil
+        generation += 1
+    }
+
+    /// Mark a fetch as pending the moment a trigger appears, before the
+    /// debounce elapses. Without this the popover renders its no-match line in
+    /// the window between the keystroke and the first request.
+    func beginPending() {
+        isLoading = true
+        errorText = nil
+    }
+
     func update(trigger: Trigger, context: SuggestionContext) async {
+        // Bumped BEFORE the dismissed check, not after: the dismissed branch
+        // below returns early, and an in-flight request from before the
+        // dismissal is still reading the OLD generation. Without this bump
+        // that request stays "current", writes `items` once it lands, and
+        // reopens a popover the user just closed.
+        generation += 1
+
         if let dismissed, dismissed.range == trigger.range, dismissed.token == trigger.token {
             items = []
             // Clearing here matters: a superseded in-flight request returns at
@@ -92,7 +117,6 @@ final class ComposerSuggestions {
         }
         lastKind = trigger.kind
 
-        generation += 1
         let mine = generation
         errorText = nil
 
