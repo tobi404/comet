@@ -12,7 +12,15 @@ struct ComposerPopover: View {
     let errorText: String?
     let onPick: (SuggestionItem) -> Void
 
+    /// Height of the rows, measured. A `ScrollView` is greedy: it takes every
+    /// point offered up to its `maxHeight`, so a `.frame(maxHeight: 180)` alone
+    /// left a single result floating in a 180pt panel. Measuring the content and
+    /// setting an exact height makes the panel hug one row and still cap at 180.
+    @State private var contentHeight: CGFloat = 0
+
     private var surfaceShape: RoundedRectangle { RoundedRectangle(cornerRadius: 20) }
+
+    private static let maxListHeight: CGFloat = 180
 
     private var header: String {
         switch kind {
@@ -53,8 +61,12 @@ struct ComposerPopover: View {
                             row(item, isLast: index == items.count - 1)
                         }
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        contentHeight = height
+                    }
                 }
-                .frame(maxHeight: 180)
+                .frame(height: min(contentHeight, Self.maxListHeight))
+                .scrollDisabled(contentHeight <= Self.maxListHeight)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

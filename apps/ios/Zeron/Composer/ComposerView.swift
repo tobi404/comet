@@ -50,10 +50,17 @@ struct ComposerShell<Chips: View>: View {
             || draft.plainText.contains("\n") || draft.plainText.count > 26
     }
 
-    /// One animatable shape for background/glass/hairline: capsule-radius
-    /// collapsed (46pt tall pill), 20pt card expanded (t3's 999↔20 morph).
+    /// One animatable shape for background/glass/hairline: a true capsule
+    /// collapsed, a 20pt card expanded (t3's 999↔20 morph).
+    ///
+    /// The collapsed radius is 999, not a literal half-height. `RoundedRectangle`
+    /// clamps its radius to half the smaller dimension, so 999 is always exactly
+    /// a capsule no matter how tall the pill is. The previous `24` only looked
+    /// like a capsule because the pill was pinned at 46pt; once the editor's
+    /// height became measured rather than fixed, 24 stopped being half of it and
+    /// the pill visibly squared off.
     private var surfaceShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: expanded ? 20 : 24)
+        RoundedRectangle(cornerRadius: expanded ? 20 : 999)
     }
 
     // Switching between VStack/HStack via AnyLayout (rather than an if/else
@@ -166,8 +173,17 @@ struct ComposerShell<Chips: View>: View {
     /// `lineLimit(1...7)` used to.
     private var lineHeight: CGFloat { 22 }
 
+    /// Collapsed is pinned, not measured. The mirror adds its own vertical
+    /// padding on top of the paddings the shell already applies, which pushed
+    /// the one-line pill from its original 46pt to about 60pt — visibly taller
+    /// and, with a capsule radius, visibly fatter. One line has no wrapping to
+    /// discover, so there is nothing to measure: pin it and let the mirror do
+    /// the job it exists for, which is growth.
+    private var collapsedEditorHeight: CGFloat { 26 }
+
     private var clampedHeight: CGFloat {
-        min(max(measuredHeight, lineHeight), lineHeight * 7)
+        guard expanded else { return collapsedEditorHeight }
+        return min(max(measuredHeight, lineHeight), lineHeight * 7)
     }
 
     /// Height measurement, taken from a hidden `Text` MIRROR rather than from
