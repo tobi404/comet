@@ -1838,7 +1838,7 @@ struct ComposerPopover: View {
     let errorText: String?
     let onPick: (SuggestionItem) -> Void
 
-    private var surfaceShape: RoundedRectangle { RoundedRectangle(cornerRadius: 16) }
+    private var surfaceShape: RoundedRectangle { RoundedRectangle(cornerRadius: 20) }
 
     private var header: String {
         switch kind {
