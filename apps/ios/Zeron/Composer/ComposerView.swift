@@ -157,13 +157,22 @@ struct ComposerShell<Chips: View>: View {
             .scrollDisabled(measuredHeight <= lineHeight * 7)
             .focused($focused)
             .background(alignment: .topLeading) { heightMirror }
-            .overlay(alignment: .topLeading) {
+            // Collapsed, the pill is exactly one line, so the placeholder is
+            // CENTRED with no vertical offset — `.leading` does that on its own,
+            // at any height. Expanded, the editor is multi-line and the
+            // placeholder belongs on the first line, so it top-aligns.
+            //
+            // The previous `.topLeading` + `.padding(.top, 8)` was a constant
+            // tuned against the old fixed editor height. Once that height became
+            // measured, the constant stopped meaning "first line" and just
+            // pushed the text low — which is exactly what it looked like.
+            .overlay(alignment: expanded ? .topLeading : .leading) {
                 if draft.isEmpty {
                     Text(placeholder)
                         .font(Theme.sans(16))
                         .foregroundStyle(Theme.textFaint)
                         .padding(.leading, 4)
-                        .padding(.top, 8)
+                        .padding(.top, expanded ? 8 : 0)
                         .allowsHitTesting(false)
                 }
             }
