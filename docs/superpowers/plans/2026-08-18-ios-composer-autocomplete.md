@@ -1619,6 +1619,11 @@ final class ComposerSuggestions {
     func update(trigger: Trigger, context: SuggestionContext) async {
         if let dismissed, dismissed.range == trigger.range, dismissed.token == trigger.token {
             items = []
+            // Clearing here matters: a superseded in-flight request returns at
+            // its own generation guard WITHOUT touching isLoading (correctly —
+            // it must not clobber a newer request's state), so any path that
+            // ends a request synchronously has to clear the spinner itself.
+            isLoading = false
             return
         }
         dismissed = nil
@@ -1643,6 +1648,10 @@ final class ComposerSuggestions {
 
         if let cached = commandCache[key] {
             items = Self.filter(cached, query: trigger.query)
+            // Same reason as the dismissed path: this ends the request without
+            // ever awaiting, so it owns clearing the spinner. Omitting it strands
+            // isLoading == true forever when this hit supersedes an in-flight miss.
+            isLoading = false
             return
         }
 
@@ -1730,7 +1739,7 @@ final class ComposerSuggestions {
     }
 
     private static func commandError(_ error: Error) -> String {
-        guard let relay = error as? RelayError else { return "Loading commands failed" }
+        guard let relay = error as? RelayError else { return "Couldn't load this agent's commands" }
         if relay.isUnknownMethod("ListCommands") {
             return "The session's device runs an older zeron — update it to list commands"
         }
@@ -1738,7 +1747,7 @@ final class ComposerSuggestions {
         case .notConnected, .hostOffline, .timeout:
             return "The session's device is unreachable"
         case .rpc:
-            return "Loading commands failed"
+            return "Couldn't load this agent's commands"
         }
     }
 }
