@@ -907,6 +907,25 @@ final class ComposerTextTests: XCTestCase {
         XCTAssertEqual(text.markdown(), "@secret ")
     }
 
+    // MARK: Run splitting
+
+    func testAnUnrelatedAttributeSplittingAChipDoesNotDuplicateItsLink() {
+        var text = draftWithChip()          // "see @a.rs "
+        // Colour two characters in the middle of the chip. Foundation's plain
+        // `runs` view splits at that boundary; the mention-keyed view must not.
+        // Iterating the plain view emits the link once PER FRAGMENT, and clause 1
+        // then fails on every fragment and kills a visually intact chip.
+        let start = text.attributed.index(text.attributed.startIndex, offsetByCharacters: 6)
+        let end = text.attributed.index(text.attributed.startIndex, offsetByCharacters: 8)
+        text.attributed[start..<end].foregroundColor = .red
+
+        XCTAssertEqual(text.markdown(), "see [a.rs](zeron-file:a.rs) ",
+                       "a split chip must serialize to ONE link, not one per fragment")
+        text.enforceInvariant()
+        XCTAssertEqual(text.markdown(), "see [a.rs](zeron-file:a.rs) ",
+                       "a visually intact chip must survive an unrelated attribute")
+    }
+
     // MARK: Trigger veto
 
     func testCaretInsideAnIntactChipOpensNoTrigger() {
@@ -1259,7 +1278,7 @@ xcodebuild test -project apps/ios/Zeron.xcodeproj -scheme Zeron \
   -only-testing:ZeronTests/ComposerTextTests
 ```
 
-Expected: PASS, 17 tests.
+Expected: PASS, 18 tests.
 
 If `testTextTypedAfterAChipDoesNotInheritTheAttribute` or the merge test behaves differently from the assertion, **do not weaken the test to match**. Check the Task 0 findings first: `inheritedByAddedText` and `invalidationConditions` are the two knobs that change this behavior, and the spike recorded what they actually do.
 
