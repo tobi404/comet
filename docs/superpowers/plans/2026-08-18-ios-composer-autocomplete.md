@@ -811,6 +811,10 @@ Create `apps/ios/ZeronTests/ComposerTextTests.swift`:
 // invariant" section.
 
 import XCTest
+// AttributedTextSelection is a SwiftUI type, and `@testable import` does not
+// re-export the module's own imports. Without this the test file will not
+// compile.
+import SwiftUI
 @testable import Zeron
 
 final class ComposerTextTests: XCTestCase {
