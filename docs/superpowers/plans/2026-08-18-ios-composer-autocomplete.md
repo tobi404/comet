@@ -797,6 +797,7 @@ git commit -m "ios: port the zeron-file mention codec and its whole-text parser"
   - `struct MentionValue: Hashable, Sendable { let path: String; let isDir: Bool }`
   - `enum MentionAttribute: AttributedStringKey`
   - `struct ComposerText: Equatable`, with `init(_ plain: String = "")`, `var attributed: AttributedString`, `var plainText: String`, `var isEmpty: Bool`, `func caretOffset(_:) -> Int?`, `func trigger(at:) -> Trigger?`, `func markdown() -> String`, `mutating func enforceInvariant()`, `mutating func apply(command:over:selection:)`, `mutating func apply(path:isDir:over:selection:)`, `mutating func clear(selection:)`
+  - `struct MentionFormatting: AttributedTextFormattingDefinition` — Task 7 applies it to the editor with `.attributedTextFormattingDefinition(MentionFormatting())`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1001,6 +1002,55 @@ extension AttributeScopes {
     }
 
     var zeron: ZeronScope.Type { ZeronScope.self }
+}
+
+// MARK: - Chip paint, derived
+
+/// Chip styling is DERIVED from the mention key. It is never stored on the run.
+///
+/// The Task 0 spike proved both halves of why, and both are load-bearing:
+///
+///   - Visual attributes inherit FORWARD. Text typed at a chip's trailing edge
+///     picks up a *stored* mono font and wash, because
+///     `inheritedByAddedText = false` holds back only the custom key.
+///   - `invalidationConditions` strips the custom key without stripping stored
+///     paint, so a dead mention would keep looking like a live chip.
+///
+/// Deriving fixes both ends at once: the paint follows the key, and only the
+/// key. Store styling on the run and you reintroduce both bugs.
+///
+/// A `ValueConstraint` may READ any attribute but may WRITE only its own
+/// `AttributeKey` (`SwiftUICore.swiftinterface:9535-9547`), so font and
+/// background are two constraints rather than one.
+struct MentionFormatting: AttributedTextFormattingDefinition {
+    typealias Scope = AttributeScopes.ZeronScope
+
+    var body: some AttributedTextFormattingDefinition<Scope> {
+        MentionFont()
+        MentionWash()
+    }
+}
+
+struct MentionFont: AttributedTextValueConstraint {
+    typealias Scope = AttributeScopes.ZeronScope
+    typealias AttributeKey = AttributeScopes.SwiftUIAttributes.FontAttribute
+
+    func constrain(_ container: inout Attributes) {
+        container[AttributeKey.self] = container[MentionAttribute.self] == nil
+            ? nil
+            : .system(size: 15, design: .monospaced)
+    }
+}
+
+struct MentionWash: AttributedTextValueConstraint {
+    typealias Scope = AttributeScopes.ZeronScope
+    typealias AttributeKey = AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute
+
+    func constrain(_ container: inout Attributes) {
+        container[AttributeKey.self] = container[MentionAttribute.self] == nil
+            ? nil
+            : Color.white.opacity(0.10)
+    }
 }
 
 struct ComposerText: Equatable {
@@ -1866,6 +1916,7 @@ Add, next to `@FocusState private var focused: Bool`:
 
 ```swift
     @Binding var selection: AttributedTextSelection
+    @State private var measuredHeight: CGFloat = 22
 ```
 
 Replace the `expanded` computed property (line 44-47) so it reads the plain projection:
@@ -1899,16 +1950,18 @@ Replace the `input` property (lines 132-139) with:
             .font(Theme.sans(16))
             .foregroundStyle(Theme.text)
             .tint(Theme.text)
+            .attributedTextFormattingDefinition(MentionFormatting())
             .scrollContentBackground(.hidden)
-            .frame(minHeight: lineHeight, maxHeight: lineHeight * 7)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(height: clampedHeight)
+            .scrollDisabled(measuredHeight <= lineHeight * 7)
             .focused($focused)
+            .background(alignment: .topLeading) { heightMirror }
             .overlay(alignment: .topLeading) {
                 if draft.isEmpty {
                     Text(placeholder)
                         .font(Theme.sans(16))
                         .foregroundStyle(Theme.textFaint)
-                        .padding(.leading, 5)
+                        .padding(.leading, 4)
                         .padding(.top, 8)
                         .allowsHitTesting(false)
                 }
@@ -1918,6 +1971,38 @@ Replace the `input` property (lines 132-139) with:
     /// One line of the composer font, used to bound the editor's growth the way
     /// `lineLimit(1...7)` used to.
     private var lineHeight: CGFloat { 22 }
+
+    private var clampedHeight: CGFloat {
+        min(max(measuredHeight, lineHeight), lineHeight * 7)
+    }
+
+    /// Height measurement, taken from a hidden `Text` MIRROR rather than from
+    /// the editor's own content size.
+    ///
+    /// This distinction is the whole point. The editor's content height depends
+    /// on the frame we set from it, so reading one to set the other makes them
+    /// chase each other — the oscillation this file's own comments already warn
+    /// about. A mirror's height depends only on the text and the available
+    /// width, never on the frame we apply to the editor, so the loop is broken.
+    ///
+    /// It is also what solves WRAPPING. The Task 0 spike verified 1-to-7 growth
+    /// from hard newlines only and left wrapped growth unsolved. `Text` wraps at
+    /// the same width with the same font, so its height IS the wrapped height.
+    ///
+    /// Known imprecision, in the safe direction: chips render at mono 15 in the
+    /// editor while the mirror measures everything at 16, so a chip-heavy line
+    /// is over-measured slightly. Over-measuring adds a hair of padding; the
+    /// opposite would clip the last line.
+    private var heightMirror: some View {
+        Text(draft.plainText.isEmpty ? " " : draft.plainText)
+            .font(Theme.sans(16))
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.vertical, 8)
+            .hidden()
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                measuredHeight = height
+            }
+    }
 
     /// THE ONLY PATH USER TYPING TAKES. `ComposerText.apply(…)` enforces the
     /// invariant for programmatic picks, but a keystroke never goes through it

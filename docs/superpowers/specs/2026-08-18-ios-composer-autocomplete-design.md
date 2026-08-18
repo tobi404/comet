@@ -108,7 +108,7 @@ as a trigger, or the same draft behaves differently on two clients.
 
 ```swift
 enum TriggerKind { case command, path }
-struct Trigger { let kind: TriggerKind; let query: String; let range: Range<Int> }
+struct Trigger { let kind: TriggerKind; let query: String; let token: String; let range: Range<Int> }
 
 func detect(text: String, caret: Int) -> Trigger?
 func replace(_ text: String, range: Range<Int>, with: String) -> (String, Int)
@@ -255,7 +255,7 @@ send.
 
 | Action | Result |
 |---|---|
-| Type inside a chip | The run splits and both fragments fail the invariant. Both drop. |
+| Type inside a chip | The run does NOT split. The framework's `invalidationConditions` drops the key from the whole run, and clause 1 fails anyway. Measured in the Task 0 spike. |
 | Backspace at a chip edge | The run reads `@Info.plis`. It drops. |
 | Type `[` before a chip | The whole-text parse fails. That chip drops. |
 | Delete the space between two chips for the same file | `AttributedString` merges the runs into one reading `@a.rs@a.rs`. It fails, and both chips drop. |
@@ -436,7 +436,7 @@ These need no simulator and no host.
 - an intact chip emits exactly `[Info.plist](zeron-file:src/Info.plist)`
 
 **The round-trip invariant** - these pin the edit policy:
-- typing inside a chip drops the attribute from both fragments
+- typing inside a chip drops the attribute from the whole run
 - one backspace at a chip's trailing edge drops the attribute
 - **a stray `[` typed before a chip drops that chip** (the review's failure case)
 - deleting the space between two same-file chips drops both
