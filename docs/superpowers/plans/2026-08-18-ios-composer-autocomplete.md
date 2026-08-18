@@ -1967,10 +1967,23 @@ In `ComposerShell`, replace line 17:
     @Binding var draft: ComposerText
 ```
 
-Add, next to `@FocusState private var focused: Bool`:
+Add `selection` immediately after `draft`, NOT next to `@FocusState private var focused`.
+
+`chips` is a `@ViewBuilder` property and is passed as a trailing closure at both call sites.
+Property order fixes the memberwise initializer's parameter order, so any stored property
+declared after `chips` would have to be passed *after* a trailing closure — which Swift does
+not allow. Declaring `selection` late compiles here and then makes Task 8's call sites
+unwritable.
+
+`measuredHeight` is `@State`, not a parameter, so its placement is free; keep it with the
+other private state.
 
 ```swift
+    @Binding var draft: ComposerText
     @Binding var selection: AttributedTextSelection
+```
+
+```swift
     @State private var measuredHeight: CGFloat = 22
 ```
 
