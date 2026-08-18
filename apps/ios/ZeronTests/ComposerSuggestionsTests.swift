@@ -122,4 +122,47 @@ final class ComposerSuggestionsTests: XCTestCase {
                            context: context)
         XCTAssertEqual(store.items.map(\.label), ["/tdd"])
     }
+
+    // Regression: a cache hit that ends its request synchronously must clear
+    // isLoading itself. If it does not, this interleaving strands the spinner
+    // on forever: an in-flight miss (request B) sets isLoading = true and
+    // suspends; before it resolves, a cache hit for an already-primed key
+    // (request A) supersedes it and returns without ever awaiting; B then
+    // resolves, loses its generation check against A, and correctly bails out
+    // WITHOUT touching isLoading — so nothing is left to clear it unless A's
+    // cache-hit branch owned that job itself.
+    //
+    // The interleaving is driven directly, not with a sleep or a yield: A is
+    // re-entrantly called from inside B's own fetcher closure, while B is
+    // genuinely suspended on that same await.
+    func testSupersededCacheHitClearsTheSpinner() async {
+        let store = ComposerSuggestions()
+        var reentrantSawLoading = false
+
+        // Prime the cache for context A so a later hit on it resolves
+        // synchronously, without ever awaiting.
+        store.fetchCommands = { _, _, _ in [self.command("tdd")] }
+        let triggerA = Trigger(kind: .command, query: "", token: "/", range: 0..<1)
+        await store.update(trigger: triggerA, context: context)
+
+        var contextB = context
+        contextB.cwd = "~/other"
+        let triggerB = Trigger(kind: .command, query: "", token: "/", range: 0..<1)
+
+        // The B fetch is a cache miss: it sets isLoading = true, then suspends
+        // here, in flight. From inside that suspension, re-enter update() for
+        // the already-cached A key.
+        store.fetchCommands = { _, _, _ in
+            reentrantSawLoading = store.isLoading
+            await store.update(trigger: triggerA, context: self.context)
+            return [self.command("tdd")]
+        }
+
+        await store.update(trigger: triggerB, context: contextB)
+
+        XCTAssertTrue(reentrantSawLoading,
+                      "the B request must genuinely be in flight when A re-enters")
+        XCTAssertFalse(store.isLoading,
+                       "a superseded cache hit must not strand the spinner on")
+    }
 }
