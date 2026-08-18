@@ -419,7 +419,7 @@ xcodebuild test -project apps/ios/Zeron.xcodeproj -scheme Zeron \
   -only-testing:ZeronTests/ComposerTriggerTests
 ```
 
-Expected: PASS, 14 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -876,11 +876,14 @@ final class ComposerTextTests: XCTestCase {
     }
 
     func testTextTypedAfterAChipDoesNotInheritTheAttribute() {
-        var text = draftWithChip()          // "see @a.rs "
-        text.replaceForTesting(9..<9, with: "Z")  // "see @a.rsZ " -> chip broken
-        // The chip's own run changed, so it drops. The point is that "Z" is
-        // never itself a mention: exactly one link's worth of text is gone.
-        XCTAssertEqual(text.markdown(), "see @a.rsZ ")
+        var text = draftWithChip()               // "see @a.rs "
+        text.replaceForTesting(9..<9, with: "Z") // "see @a.rsZ "
+        // `inheritedByAddedText = false` means "Z" lands OUTSIDE the run, so
+        // the chip still reads exactly "@a.rs" and both clauses hold. The chip
+        // survives and "Z" is plain text beside it. If this ever asserts the
+        // chip was dropped, the attribute is bleeding into typed text.
+        XCTAssertEqual(text.markdown(), "see [a.rs](zeron-file:a.rs)Z ")
+        XCTAssertEqual(text.plainText, "see @a.rsZ ")
     }
 
     // MARK: Clause 2 — round trip
@@ -1187,7 +1190,7 @@ xcodebuild test -project apps/ios/Zeron.xcodeproj -scheme Zeron \
   -only-testing:ZeronTests/ComposerTextTests
 ```
 
-Expected: PASS, 18 tests.
+Expected: PASS, 17 tests.
 
 If `testTextTypedAfterAChipDoesNotInheritTheAttribute` or the merge test behaves differently from the assertion, **do not weaken the test to match**. Check the Task 0 findings first: `inheritedByAddedText` and `invalidationConditions` are the two knobs that change this behavior, and the spike recorded what they actually do.
 
@@ -1687,7 +1690,7 @@ xcodebuild test -project apps/ios/Zeron.xcodeproj -scheme Zeron \
   -only-testing:ZeronTests/ComposerSuggestionsTests
 ```
 
-Expected: PASS, 8 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
