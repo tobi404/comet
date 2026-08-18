@@ -290,7 +290,9 @@ struct ComposerView: View {
     let chat: Chat
     let runLive: Bool
 
-    @State private var text = ""
+    @State private var text = ComposerText()
+    @State private var selection = AttributedTextSelection()
+    @State private var suggestions = ComposerSuggestions()
     @State private var attachments: [StagedAttachment] = []
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showPicker = false
@@ -327,25 +329,48 @@ struct ComposerView: View {
                     .padding(.horizontal, 24)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            ComposerShell(
-                draft: $text,
-                sendEnabled: true,
-                showStop: runLive,
-                busy: uploading,
-                keepExpanded: showModelPicker || showTraitPicker,
-                onSend: send,
-                onStop: { store.sendInterrupt() },
-                attachments: attachments,
-                onAttach: { showPicker = true },
-                onRemoveAttachment: { id in attachments.removeAll { $0.id == id } },
-                autoFocus: model.launchFocusComposer
-            ) {
-                ComposerChip(label: currentModel.label, badgeHarness: harness) {
-                    showModelPicker = true
+            ZStack(alignment: .bottom) {
+                // `isLoading` belongs in this gate. Without it, a first query against
+                // a cold cache has no items and no error, so the popover stays hidden
+                // and ComposerPopover's "Loading…" / "Searching files…" states are
+                // unreachable — the user gets no feedback at all while the host is
+                // being asked.
+                if let trigger = text.trigger(at: selection),
+                   !suggestions.items.isEmpty || suggestions.errorText != nil || suggestions.isLoading {
+                    ComposerPopover(items: suggestions.items,
+                                    kind: trigger.kind,
+                                    isLoading: suggestions.isLoading,
+                                    errorText: suggestions.errorText) { item in
+                        pick(item, over: trigger.range)
+                    }
+                    // 10, not 16: ComposerShell narrows its own margins to 10 while
+                    // focused (ComposerView.swift:68), and the popover only ever shows
+                    // while focused. 16 would leave its edges visibly inset from the
+                    // pill directly beneath it.
+                    .padding(.horizontal, 10)
+                    .transition(.opacity)
                 }
-                if let currentReasoning {
-                    ComposerChip(label: HarnessCatalog.reasoningLabel(currentReasoning)) {
-                        showTraitPicker = true
+                ComposerShell(
+                    draft: $text,
+                    selection: $selection,
+                    sendEnabled: true,
+                    showStop: runLive,
+                    busy: uploading,
+                    keepExpanded: showModelPicker || showTraitPicker,
+                    onSend: send,
+                    onStop: { store.sendInterrupt() },
+                    attachments: attachments,
+                    onAttach: { showPicker = true },
+                    onRemoveAttachment: { id in attachments.removeAll { $0.id == id } },
+                    autoFocus: model.launchFocusComposer
+                ) {
+                    ComposerChip(label: currentModel.label, badgeHarness: harness) {
+                        showModelPicker = true
+                    }
+                    if let currentReasoning {
+                        ComposerChip(label: HarnessCatalog.reasoningLabel(currentReasoning)) {
+                            showTraitPicker = true
+                        }
                     }
                 }
             }
@@ -383,13 +408,56 @@ struct ComposerView: View {
         .task(id: "\(chat.id)/\(harness)") {
             guard let space = model.space(for: chat) else { return }
             catalogs[harness] = await model.listModels(space: space, harness: harness)
+            // AppModel.workspace is Optional (AppModel.swift:21): signed out or
+            // in demo mode there is no store, and so no suggestions.
+            suggestions.fetchCommands = { [weak model] harness, device, cwd in
+                guard let store = model?.workspace else { return [] }
+                return try await store.listCommands(deviceId: device, harness: harness, cwd: cwd)
+            }
+            suggestions.fetchPaths = { [weak model] context, query in
+                guard let store = model?.workspace else { return [] }
+                return try await store.searchFiles(deviceId: context.deviceId,
+                                                   chatId: context.chatId,
+                                                   spaceId: context.spaceId,
+                                                   query: query)
+            }
         }
+        .onChange(of: text) { _, _ in Task { await refreshSuggestions() } }
+        .onChange(of: selection) { _, _ in Task { await refreshSuggestions() } }
         .onAppear {
             if model.launchSheet == "config" {
                 model.launchSheet = nil
                 showModelPicker = true
             }
         }
+    }
+
+    /// Everything the fetchers need. The chat's own device hosts the run, so it
+    /// is the device to dial: a `chatId` search only works there
+    /// (crates/engine/src/rpc.rs:501-502).
+    private var suggestionContext: SuggestionContext? {
+        guard let space = model.space(for: chat) else { return nil }
+        return SuggestionContext(harness: harness,
+                                 deviceId: space.deviceId,
+                                 cwd: chat.cwd ?? space.path,
+                                 chatId: chat.id,
+                                 spaceId: nil)
+    }
+
+    private func pick(_ item: SuggestionItem, over range: Range<Int>) {
+        switch item.payload {
+        case .command(let name):
+            text.apply(command: name, over: range, selection: &selection)
+        case .path(let path, let isDir):
+            text.apply(path: path, isDir: isDir, over: range, selection: &selection)
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func refreshSuggestions() async {
+        guard let context = suggestionContext,
+              let trigger = text.trigger(at: selection) else { return }
+        await suggestions.update(trigger: trigger, context: context)
     }
 
     /// Merge a model/effort change into the chat's config row (LWW; the host
@@ -427,7 +495,7 @@ struct ComposerView: View {
     }
 
     private func send() {
-        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = text.markdown().trimmingCharacters(in: .whitespacesAndNewlines)
         let staged = attachments
         guard !prompt.isEmpty || !staged.isEmpty else { return }
 
@@ -471,15 +539,15 @@ struct ComposerView: View {
     }
 
     private func clearDraft() {
-        text = ""
+        text.clear(selection: &selection)
         // The clear above is unconditional, so a prompt left sitting in the
         // composer after a successful send is not this path failing to run —
         // it is the text view writing the pre-send string back. A focused
-        // multiline TextField commits pending autocorrect/marked text through
+        // multiline editor commits pending autocorrect/marked text through
         // the binding AFTER a programmatic change, which restores the prompt.
         // Re-clear once that has drained; a keystroke can't land inside the
         // same main-actor turn, so this can never eat real input.
-        Task { @MainActor in text = "" }
+        Task { @MainActor in text.clear(selection: &selection) }
     }
 }
 
