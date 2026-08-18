@@ -446,7 +446,15 @@ final class WorkspaceStore {
     /// dial the chat's host.
     func searchFiles(deviceId: String, chatId: String?, spaceId: String?,
                      query: String) async throws -> [FileSearchMatch] {
-        var params: [String: Any] = ["query": String(query.prefix(256))]
+        // Truncate on UNICODE SCALARS, not Characters. The engine's cap is
+        // `p.query.chars().count() > 256` (crates/engine/src/rpc.rs:1551), and a
+        // Rust `char` is a scalar value, while Swift's `prefix` counts extended
+        // grapheme clusters. One flag emoji is 1 Character but 2 scalars, so a
+        // Character-based truncation is a no-op on input the engine then
+        // rejects with BadParams.
+        var params: [String: Any] = [
+            "query": String(String.UnicodeScalarView(query.unicodeScalars.prefix(256)))
+        ]
         if let chatId { params["chatId"] = chatId }
         if let spaceId { params["spaceId"] = spaceId }
         return try await relay(for: deviceId).call(method: "SearchFiles", params: params)
