@@ -531,7 +531,7 @@ final class MentionLinkTests: XCTestCase {
 
     func testParseAcceptsAWellFormedLink() {
         let parsed = MentionLink.parse("see [a.rs](zeron-file:src/a.rs) ok")
-        XCTAssertEqual(parsed, [ParsedMention(range: 4..<30, basename: "a.rs",
+        XCTAssertEqual(parsed, [ParsedMention(range: 4..<31, basename: "a.rs",
                                               path: "src/a.rs", isDir: false)])
     }
 
