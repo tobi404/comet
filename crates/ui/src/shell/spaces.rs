@@ -673,6 +673,7 @@ impl Shell {
                     branch.map(SharedString::from),
                     change_request,
                     harness,
+                    chat.note.as_ref(),
                     status,
                     is_selected,
                     false,
@@ -836,6 +837,9 @@ impl Shell {
                         .flex_row()
                         .items_center()
                         .gap(px(10.0))
+                        // Anchors the Chat Note marker inside the row's own
+                        // left padding — see the active rows.
+                        .relative()
                         .px(px(10.0))
                         .rounded(px(6.0))
                         .cursor_pointer()
@@ -887,7 +891,11 @@ impl Shell {
                                 })
                                 .child(title),
                         )
-                        .child(right),
+                        .child(right)
+                        // Same helper as the active rows, so the shelf can
+                        // never drift to a second marker geometry. Last child:
+                        // it paints over the selected wash.
+                        .children(super::note_bar::note_bar(chat.note.as_ref())),
                 );
             }
             // Mount fade: the shelf popping in whole read as jank — a quick

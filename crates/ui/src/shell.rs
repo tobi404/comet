@@ -52,6 +52,7 @@ use crate::terminal::panel::{TerminalPanel, ToggleTerminal, clamp_terminal_heigh
 use crate::theme::Theme;
 use crate::transcript::{self, Transcript, TranscriptEvent};
 
+mod note_bar;
 mod spaces;
 mod tabs;
 
@@ -3392,6 +3393,7 @@ impl Shell {
         branch: Option<SharedString>,
         change_request: Option<zeron_proto::ChangeRequestSummary>,
         harness: Option<zeron_proto::HarnessId>,
+        note: Option<&zeron_proto::ChatNote>,
         status: zeron_proto::ChatIndicator,
         selected: bool,
         archived: bool,
@@ -3550,6 +3552,9 @@ impl Shell {
             .flex_col()
             .gap(px(2.0))
             .rounded(px(8.0))
+            // The Chat Note marker anchors here and overlays the left padding
+            // — it reserves no width, so a Chat without a note is unchanged.
+            .relative()
             .px(px(Theme::SPACE_SM))
             .py(px(6.0))
             .text_color(motion::hover_blend(&fade_key, rest_text, text))
@@ -3674,6 +3679,9 @@ impl Shell {
                         ))
                     }),
             )
+            // The resting marker, last so it paints OVER the row's hover and
+            // selected washes (both are this element's own background).
+            .children(note_bar::note_bar(note))
             .into_any_element()
     }
 
