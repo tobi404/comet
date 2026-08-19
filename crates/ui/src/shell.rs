@@ -883,7 +883,7 @@ pub struct Shell {
     note_card_latch: Option<String>,
     /// Card heights measured one frame late — the vertical centring needs a
     /// height before the card exists.
-    note_card_heights: note_card::HeightCache,
+    note_card_heights: note_card::TextBoxCache,
     /// Bumped per open so a stale 350ms timer cannot fire into a newer wait.
     note_card_generation: u64,
     /// Scroll position of the sidebar lists region (drives its edge fades).

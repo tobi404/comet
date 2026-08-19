@@ -75,6 +75,11 @@ pub(super) const PAD_X: f32 = 10.0;
 /// top-heavy.
 pub(super) const PAD_Y: f32 = 8.0;
 
+/// `popover_card`'s hairline, in pixels. Named because two things need it: the
+/// tint's corner radius sits one pixel inside the card's, and the measured text
+/// box is one hairline shy of the card on each edge.
+const BORDER: f32 = 1.0;
+
 /// The overflow clamp. Ten lines, then elide — the card never scrolls, and
 /// storage cannot promise a short note (ADR 0001: iOS writes registry rows
 /// directly, so no engine check bounds the text). This number is load-bearing
@@ -349,57 +354,75 @@ impl RowAnchor {
     }
 }
 
-/// Card heights, measured one frame late.
+/// The text box's measured size, one frame late. It settles two things that
+/// cannot both be free at once.
 ///
-/// Centring needs the card's height before the card exists, so a `canvas`
-/// inside the card writes its measured height into [`Self::measured`] and the
-/// next frame drains it into [`Self::cache`]. A repeat open of the same note at
-/// the same width is exact from its first frame; a first open spends
+/// **Centring** needs the card's height before the card exists. A `canvas`
+/// inside the text box writes its size into [`Self::measured`] and the next
+/// frame drains it into [`Self::cache`]. A first open spends
 /// [`estimate_height`] on the opening frame of the fade, where the card is
-/// still all but transparent.
+/// still all but transparent; a repeat open of the same note at the same cap is
+/// exact from its first frame.
 ///
-/// Keyed by the note's TEXT and the whole-pixel card width, not by the Chat: an
-/// edited note is a different height, and so is the same note in a window that
+/// **The elide** needs a definite width, and this is the load-bearing part.
+/// Under a bare `max_w` the text box's width and its truncation each depend on
+/// the other, and gpui resolves that by truncating against whichever candidate
+/// width one of taffy's measure passes happened to use — the hazard its own
+/// `elements/text.rs` calls "poisons intrinsic sizing". The symptom is a card
+/// that stops several lines short of the clamp and is narrower than it should
+/// be. So the first frame runs `max_w` with NO ellipsis (nothing can truncate,
+/// so the measured width is honestly the content's), and every frame after
+/// pins that width with `.w()` and turns the ellipsis on. The card still sizes
+/// to its content — the pinned number IS the content's width.
+///
+/// Keyed by the note's TEXT and the whole-pixel width cap, not by the Chat: an
+/// edited note is a different size, and so is the same note in a window that
 /// resized under it. Keying on the text is what makes both cases invalidate
 /// themselves instead of needing to be noticed.
 #[derive(Default)]
-pub(super) struct HeightCache {
-    measured: Rc<RefCell<Option<(Key, f32)>>>,
-    cache: HashMap<Key, f32>,
+pub(super) struct TextBoxCache {
+    measured: Rc<RefCell<Option<Entry>>>,
+    cache: HashMap<Key, Size<Pixels>>,
 }
 
-/// (note text, card width in whole pixels).
+/// (note text, the card's width cap in whole pixels).
 type Key = (SharedString, u32);
+
+/// One measurement in flight, from the `canvas` that took it to the next
+/// frame's [`TextBoxCache::drain`].
+type Entry = (Key, Size<Pixels>);
 
 /// Enough for every note on screen at a handful of window widths. Past it the
 /// cache starts over rather than growing for the life of the process — the
-/// cost of a miss is one frame at the estimate.
-const HEIGHT_CACHE_MAX: usize = 64;
+/// cost of a miss is one unelided frame.
+const TEXT_BOX_CACHE_MAX: usize = 64;
 
-impl HeightCache {
+impl TextBoxCache {
     /// Fold in whatever the last frame's card measured. Call once at the top of
     /// the render site.
     pub(super) fn drain(&mut self) {
-        if let Some((key, height)) = self.measured.borrow_mut().take() {
-            if self.cache.len() >= HEIGHT_CACHE_MAX {
+        if let Some((key, size)) = self.measured.borrow_mut().take() {
+            if self.cache.len() >= TEXT_BOX_CACHE_MAX {
                 self.cache.clear();
             }
-            self.cache.insert(key, height);
+            self.cache.insert(key, size);
         }
     }
 
-    pub(super) fn get(&self, text: &SharedString, width: f32) -> Option<f32> {
-        self.cache.get(&(text.clone(), key_width(width))).copied()
+    /// The text box's size from a previous frame, or `None` on a note and cap
+    /// this cache has not seen — the frame that measures it.
+    pub(super) fn get(&self, text: &SharedString, cap: f32) -> Option<Size<Pixels>> {
+        self.cache.get(&(text.clone(), key_width(cap))).copied()
     }
 
-    /// The sink a card's measuring `canvas` writes through.
-    pub(super) fn writer(&self, text: &SharedString, width: f32) -> impl Fn(f32) + 'static {
+    /// The sink the text box's measuring `canvas` writes through.
+    pub(super) fn writer(&self, text: &SharedString, cap: f32) -> impl Fn(Size<Pixels>) + 'static {
         let cell = self.measured.clone();
-        let key: Key = (text.clone(), key_width(width));
-        move |height| {
+        let key: Key = (text.clone(), key_width(cap));
+        move |size| {
             let mut slot = cell.borrow_mut();
-            if slot.as_ref().is_none_or(|(_, prev)| *prev != height) {
-                *slot = Some((key.clone(), height));
+            if slot.as_ref().is_none_or(|(_, prev)| *prev != size) {
+                *slot = Some((key.clone(), size));
             }
         }
     }
@@ -700,10 +723,14 @@ impl Shell {
             return None;
         };
 
-        let height = self
-            .note_card_heights
-            .get(&text, width)
-            .unwrap_or_else(|| estimate_height(text.chars().count(), width));
+        // The text box's size from an earlier frame. Its WIDTH is what makes
+        // the elide correct (see `TextBoxCache`); its height is what centres
+        // the card. Absent, this is the frame that measures both.
+        let measured = self.note_card_heights.get(&text, width);
+        let height = measured.map_or_else(
+            || estimate_height(text.chars().count(), width),
+            |size| f32::from(size.height),
+        ) + 2.0 * BORDER;
         let position = point(
             px(left_for(sidebar_now)),
             px(top_for(
@@ -719,25 +746,52 @@ impl Shell {
             // The card's own hairline, in the note's colour.
             .border_color(colour.opacity(0.32))
             .relative()
-            // The tint, first so the text paints over it. `popover_card`'s
-            // `overflow_hidden` clips it to the 12px radius.
-            .child(div().absolute().inset_0().bg(colour.opacity(0.10)))
+            .child(
+                // The tint, first so the text paints over it. It carries its
+                // OWN radius: `popover_card`'s `overflow_hidden` masks to a
+                // rectangle (gpui's `ContentMask` is bounds only), so a square
+                // fill would paint into all four rounded corners. One pixel
+                // tighter than the card, because an inset-0 child starts
+                // inside the hairline.
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(popover::CARD_RADIUS - BORDER))
+                    .bg(colour.opacity(0.10)),
+            )
             .child(
                 div()
                     .relative()
-                    // A cap on the TEXT, not a target: the card sizes to its
-                    // content, so a five-word note is a five-word card. An
-                    // unbreakable token wider than this clips against the
-                    // card's `overflow_hidden` instead of widening it.
-                    .max_w(px(width))
+                    // Pinned to the width the content asked for on the frame
+                    // before; a cap on the first frame, when nothing may
+                    // truncate. An unbreakable token wider than the cap clips
+                    // against the card's `overflow_hidden` instead of widening
+                    // it.
+                    .map(|el| match measured {
+                        Some(size) => el.w(size.width),
+                        None => el.max_w(px(width)),
+                    })
                     .px(px(PAD_X))
                     .py(px(PAD_Y))
                     .text_size(px(TEXT_SIZE))
                     .line_height(px(LINE_HEIGHT))
                     .text_color(theme.text)
-                    // The card never scrolls: ten lines, then elide.
+                    // The card never scrolls: ten lines, then elide. The elide
+                    // waits for the pinned width — asked for it a frame early
+                    // it truncates against a candidate width taffy was only
+                    // trying on, and the card stops short of the clamp.
                     .line_clamp(LINE_CLAMP)
-                    .text_ellipsis()
+                    .when(measured.is_some(), |el| el.text_ellipsis())
+                    // Measures the text box for the next frame: its height
+                    // centres the card, its width pins this element.
+                    .child(
+                        gpui::canvas(
+                            move |bounds, _, _| measure(bounds.size),
+                            |_, _: (), _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
                     .child(text.clone()),
             )
             // Any mouse-down closes the card. `_out` covers the row underneath
@@ -751,17 +805,6 @@ impl Shell {
 
         let content = div()
             .relative()
-            // Measured a frame late and cached by note text and width —
-            // centring needs a height before the card exists. Outside the card
-            // so the hairline counts.
-            .child(
-                gpui::canvas(
-                    move |bounds, _, _| measure(f32::from(bounds.size.height)),
-                    |_, _: (), _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
             .child(card)
             // Arrives FROM the sidebar: 10px of leftward offset resolving to
             // zero across `MENU_IN`, under the fade `menu_at` already plays.
@@ -867,19 +910,22 @@ mod tests {
     }
 
     /// The measurement lands one frame late, and it is keyed by what actually
-    /// decides the height.
+    /// decides the size. A miss is what makes a frame render unelided, so a
+    /// miss on the wrong thing shows on screen.
     #[test]
-    fn a_measured_height_is_remembered_per_note_text_and_width() {
-        let mut cache = HeightCache::default();
+    fn a_measured_text_box_is_remembered_per_note_text_and_cap() {
+        let mut cache = TextBoxCache::default();
         let text = SharedString::from("ship it");
+        let box_size = gpui::size(px(84.0), px(35.0));
         assert_eq!(cache.get(&text, MAX_WIDTH), None);
 
         // The card's canvas writes during prepaint; the next frame's render
-        // drains. Nothing is visible until it does.
-        cache.writer(&text, MAX_WIDTH)(27.0);
+        // drains. Nothing is pinned until it does — that first frame is the
+        // one that carries no ellipsis.
+        cache.writer(&text, MAX_WIDTH)(box_size);
         assert_eq!(cache.get(&text, MAX_WIDTH), None);
         cache.drain();
-        assert_eq!(cache.get(&text, MAX_WIDTH), Some(27.0));
+        assert_eq!(cache.get(&text, MAX_WIDTH), Some(box_size));
 
         // An edited note and a resized window both miss — which is the whole
         // reason the key is the text and not the Chat.
@@ -888,15 +934,15 @@ mod tests {
             None
         );
         assert_eq!(cache.get(&text, FLOOR_WIDTH), None);
-        // Sub-pixel width jitter does not miss.
-        assert_eq!(cache.get(&text, MAX_WIDTH + 0.4), Some(27.0));
+        // Sub-pixel cap jitter does not miss.
+        assert_eq!(cache.get(&text, MAX_WIDTH + 0.4), Some(box_size));
 
         // It starts over rather than growing for the life of the process.
-        for i in 0..HEIGHT_CACHE_MAX {
-            cache.writer(&SharedString::from(format!("note {i}")), MAX_WIDTH)(19.0);
+        for i in 0..TEXT_BOX_CACHE_MAX {
+            cache.writer(&SharedString::from(format!("note {i}")), MAX_WIDTH)(box_size);
             cache.drain();
         }
-        assert!(cache.cache.len() <= HEIGHT_CACHE_MAX);
+        assert!(cache.cache.len() <= TEXT_BOX_CACHE_MAX);
     }
 
     /// Resting on a noted row opens the card; resting on a row that cannot
