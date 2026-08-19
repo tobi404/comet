@@ -450,6 +450,13 @@ struct ComposerView: View {
                 autoFocus: model.launchFocusComposer,
                 onFocusChange: { composerFocused = $0 }
             ) {
+                if let pullRequest = model.changeRequest(for: chat) {
+                    PullRequestBadge(summary: pullRequest, surface: .composer)
+                }
+                if let branch = chat.branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !branch.isEmpty {
+                    BranchContextChip(branch: branch)
+                }
                 ComposerChip(label: currentModel.label, badgeHarness: harness) {
                     showModelPicker = true
                 }
