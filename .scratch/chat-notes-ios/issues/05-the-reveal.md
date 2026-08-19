@@ -130,7 +130,7 @@ Held against the alternatives on the real list - see
 | mechanism | `.contextMenu(menuItems:preview:)` on the row, iOS 26's zoom transition |
 | base | `Theme.surface` |
 | tint | the note's Colour Slot at **0.10** across the card, plus a **1pt** hairline of the same colour at **0.32** |
-| corner radius | **12pt** |
+| corner radius | **12pt** - see the amendment below: the number is right and the mechanism was missing |
 | padding | **12pt** horizontal, **10pt** vertical |
 | text | **13pt** `Theme.sans`, `Theme.text` |
 | maximum text width | **300pt**, so the card is **324pt** wide. It sizes to its content: a five-word note is a five-word card |
@@ -348,6 +348,17 @@ desktop spec's own fixture is 671 (§7) and this one was written to match it; it
 finding above stands** - the card still fills to ten lines, still elides, still never scrolls -
 and now stands at the right number. The fixture text is deliberately unchanged, because editing
 it would invalidate the frames below.
+
+### Amended by 09
+
+**The 12pt corner radius above was never drawn.** Found by
+[09 - The Note Card's corner, on the system's preview platter](./09-the-note-cards-corner.md). The
+platter that masks this card - the same mask this ticket found under question 4 - carries a corner
+of its own, about half the card's height on a short note, so every card in the frames above is a
+stadium and the 12 is under the mask. **The number stands and gains a mechanism**: 12pt,
+continuous, held by a 14pt veil of page colour inside the preview. Every other row of the table is
+unaffected, and this ticket's own findings - the width sweep, the clip, the clamp, the content -
+all stand, because none of them is about the corner.
 
 ### Assets
 

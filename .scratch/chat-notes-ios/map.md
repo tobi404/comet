@@ -165,6 +165,20 @@ Looked up, not decided. A ticket does not need to re-check these.
   every declared one. So an action list has to be written backwards to be heard forwards, and one
   position in it cannot be chosen at all.
 
+- **A `.contextMenu` preview is exempt from the dim the system puts over everything else, and the
+  dim is linear.** Found by [09](./issues/09-the-note-cards-corner.md), by solving it from 27
+  sample pairs: `pressed = 0.7917 x rest + (4.7, 4.7, 8.7)`, a dark blue-grey at about 21%. So a
+  colour authored inside a preview renders exactly as authored while the same colour outside it
+  does not, and `Theme.bg` `#0D0D0D` reads `#0F0F13` beside a preview. Recorded here and not only
+  in the ticket, because it is the same trap class as `Theme.sansUI`: two things that look like the
+  same colour, measured with the wrong one, and nothing warns.
+
+- **The `.contextMenu` preview platter draws a surface of its own, and owns its corner.** Found by
+  [09](./issues/09-the-note-cards-corner.md). The tray is invisible whenever the preview's content
+  covers it exactly, which is why 05 and 06 never saw it. Its corner is not a constant - it grew
+  from 24pt across on the smallest card built to 44pt on the largest - and
+  `.contentShape(.contextMenuPreview, _)` does not reach it from any of three attachment points.
+
 - **A `.contextMenu` preview does not adopt its content's height.** Found by
   [05](./issues/05-the-reveal.md), and it constrains every ticket that touches the long press.
   The preview lays its content out correctly and then masks it, so a card taller than about two
@@ -175,6 +189,25 @@ Looked up, not decided. A ticket does not need to re-check these.
 ## Decisions so far
 
 <!-- one line per resolved ticket -->
+
+- [09 - The Note Card's corner, on the system's preview platter](./issues/09-the-note-cards-corner.md) -
+  the card is **inset 14pt inside the preview and the margin is filled with `#0F0F13`**, the page's
+  own colour as the system's menu dim leaves it, so the platter's arc cuts flat colour and the
+  card's own **12pt continuous** corner is the only corner on screen. **05's 12 was never drawn**:
+  the platter masks the preview with a corner of its own that is about half the card's height on a
+  short note, so every short card was a stadium - ovalness **0.79** on the one-word note, 0.63 on
+  three lines, a full pill on the 36pt shelf. **`.contentShape(.contextMenuPreview, _)` does
+  nothing**, built at three attachment points - on the row, outermost on the preview, and inside
+  the forced height - all three frames pixel-identical to the defect. The **UIKit
+  `visiblePath`** route was priced and declined, not tried: it would replace the SwiftUI
+  `.contextMenu` and force 06's menu, 08's actions and the swipe to be re-established. A plain
+  transparent inset was built and refused - it exposes **the platter's own tray**, which is the
+  finding that made the veil obvious. After: ovalness **0.18**, the same number on every fixture
+  and every text size, on both row shapes, and **05's height rule and 08's clamp are untouched**
+  because the veil sits outside the forced height. **The cost is one constant tracking a system
+  effect**, with the recipe to re-derive it: the dim is linear, `pressed = 0.7917 x rest +
+  (4.7, 4.7, 8.7)`. Chosen by the human; the radius swept at 8, 12, 16, 20. Prototype on branch
+  `proto/09-the-cards-corner`.
 
 - [08 - The reveal, read aloud and at the largest text](./issues/08-voiceover-and-large-text.md) -
   **a clamp is a height, fixed at what N lines occupy at the default text size**, so the line
