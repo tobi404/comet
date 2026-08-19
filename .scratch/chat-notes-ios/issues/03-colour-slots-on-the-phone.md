@@ -54,9 +54,13 @@ slot id paints as `rose`, matching the desktop.
 Judged live on an iPhone 17 Pro simulator, not from a screenshot, flipping four tone candidates
 on the real Sessions list and the real archived shelf. **Named cost of the method**: the ticket
 asked for a physical device; the iPhone was offline and the simulator was chosen instead. The
-Mac panel is not the phone's OLED, so the small-size verdict below (question 5) is one notch
-weaker than the ticket wanted. Every other answer here is measured, not seen, so the substitution
-does not reach them.
+Mac panel is not the phone's OLED, so two answers below are one notch weaker than the ticket
+wanted: the small-size verdict (question 5), and the tone pick itself, which was made by eye as
+well as from the table. The contrast, separation, and gamut numbers are computed, so the
+substitution does not reach them, and neither does the fallback decision, which turns on
+cross-app consistency rather than on how it looks. The branch stays installable, so D can be
+re-confirmed on the physical iPhone at any time before [07](./07-write-the-spec.md) freezes the
+spec.
 
 ### 1. The values
 
