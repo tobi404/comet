@@ -3,7 +3,7 @@
 Map: [Chat Notes on iOS](../map.md)
 Type: grilling
 Status: open
-Blocked by: 05 (resolved)
+Blocked by: 05 (resolved), 06 (resolved)
 
 ## Question
 
@@ -58,6 +58,30 @@ Answer:
    whether it honours Reduce Motion on its own, and if the app has any say, decide what it says.
    The app already routes its own animations through `motionAnimation` (`Theme/Motion.swift:55`).
 
-6. **What the spec carries.** Whichever of the above end as accepted limits rather than
+6. **The slot row under VoiceOver.** Added by
+   [06](./06-menu-and-note-editor-sheet.md), which built the control: five 18pt dots in 44pt
+   targets, the chosen one ringed. The targets clear the minimum, so this is about words and not
+   about size. The prototype speaks the **raw slot id** - "rose", "amber", "green", "sky",
+   "violet" - which is the id the wire carries and not necessarily a label a person wants read to
+   them, and the ring is a visual selected state that has to become `.isSelected` or be spoken.
+   Decide what the five are called aloud, and whether "rose" is a colour name or a leak of the
+   storage format. This is the same class of question as 1: a Colour Slot is a colour, and a
+   colour is not a label.
+
+7. **The Note Editor at the accessibility text sizes.** Also added by
+   [06](./06-menu-and-note-editor-sheet.md). Its sheet is a **content-sized detent**, computed
+   from text that scales, and its field **floors at 3 wrapped lines and grows to 6** - both of
+   which get taller as the text does, against a keyboard that does not shrink. Decide what the
+   sheet does when its content plus the keyboard no longer fit: a taller detent, fewer floor
+   lines, or `.large`. Question 3 asks the same thing of the card; the two answers should agree
+   or say why they do not.
+
+8. **What the menu says aloud.** [06](./06-menu-and-note-editor-sheet.md) made the menu's first
+   item the **only** place the shell states in words that a note exists ("Add note…" against
+   "Edit note…"), and refused a resting affordance on the strength of it. If question 2 lands on
+   an accepted limit, that item is the whole VoiceOver story for "this session has a note", and
+   the decision should say so out loud rather than leaving it implied.
+
+9. **What the spec carries.** Whichever of the above end as accepted limits rather than
    solutions, state each one as a decision with its reason, in the form
    [07](./07-write-the-spec.md) can carry verbatim.

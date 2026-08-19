@@ -142,6 +142,13 @@ Looked up, not decided. A ticket does not need to re-check these.
   from the desktop would be dropped by an iOS edit. What iOS preserves is `modelOptions`, an
   open map it cannot author. Read the file's warning comment narrowly.
 
+- **`UITextViewDelegate`'s plural method has a Swift label the obvious spelling gets wrong, and
+  getting it wrong is silent.** Found by [06](./issues/06-menu-and-note-editor-sheet.md). It is
+  `shouldChangeTextInRanges`, not `shouldChangeTextIn`; Swift keeps "Ranges" so the plural does
+  not collide with the singular. The wrong spelling compiles, satisfies no protocol requirement,
+  exports no selector and never fires, with no warning. Recorded here and not only in the ticket,
+  because it is the kind of trap an implementer hits again on a different delegate.
+
 - **A `.contextMenu` preview does not adopt its content's height.** Found by
   [05](./issues/05-the-reveal.md), and it constrains every ticket that touches the long press.
   The preview lays its content out correctly and then masks it, so a card taller than about two
@@ -152,6 +159,23 @@ Looked up, not decided. A ticket does not need to re-check these.
 ## Decisions so far
 
 <!-- one line per resolved ticket -->
+
+- [06 - The long-press menu and the Note Editor sheet](./issues/06-menu-and-note-editor-sheet.md) -
+  the menu carries **three items** on every row, noted or not: **"Add note…"/"Edit note…"**,
+  **Archive** (Unarchive on the shelf), and **Clear note** only where a note exists. A bare row
+  previews nothing custom; the system lifts the row. The Note Editor is a **content-sized
+  `.height()` detent** (`content + 60`, the 60 measured) with **nav bar Cancel and Save** - not the
+  app's pinned pill - running field then **five 18pt dots, 6pt apart, in 44pt targets, ringed**.
+  `.medium` is refused on a measurement: with the keyboard up it swells to near-full-screen and
+  leaves ~470pt of void. The counter is the desktop's rule verbatim, verified at 239/245/280.
+  **Nothing confirms anything** - the desktop's reasoning holds on a phone, and Clear lives in the
+  menu only. **Return saves and dismisses**, which costs the phone the ability to author a newline
+  at all (an existing multi-line note survives editing). A swipe-down discards, driven with dirty
+  text. The slot row fires selection feedback; Save fires nothing, named as a device question.
+  The card and the menu ride one gesture without fighting, and the trailing swipe survives on both
+  row shapes. **05's over-cap fixture is 779 characters, not 671** - amended there, findings
+  unchanged. **02 is confirmed and amended twice**: the plural delegate's Swift label, and the
+  caret. Prototype on branch `proto/06-menu-and-editor`.
 
 - [05 - The reveal: how the phone shows the note](./issues/05-the-reveal.md) - **V1**: the row
   gains 04's marker and nothing else, and a **long press opens the Note Card**. Chosen by the
@@ -218,11 +242,12 @@ Looked up, not decided. A ticket does not need to re-check these.
 
 In-scope fog. Each patch graduates into tickets once the frontier reaches it.
 
-- **Discoverability.** A user with no notes has nothing on screen that says a note is possible -
-  and [05](./issues/05-the-reveal.md) sharpened the problem rather than easing it: the winner
-  shows no note text at rest, so a user with six notes cannot read one without pressing. Whether
-  that needs an affordance, and where, still waits on the menu's final shape in
-  [06](./issues/06-menu-and-note-editor-sheet.md).
+**Empty.** Discoverability was the last patch and
+[06](./issues/06-menu-and-note-editor-sheet.md) cleared it rather than graduating it: the phone
+adds no affordance, because "Add note…" in the long-press menu is the whole one and a card whose
+only content is "there is no note here" is noise on a list 05 chose to keep calm. The sharper
+half - a user with six notes reads none of them at rest - is not a new question but 05's verdict,
+taken on the real list.
 
 ## Out of scope
 
