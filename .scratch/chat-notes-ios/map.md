@@ -149,6 +149,22 @@ Looked up, not decided. A ticket does not need to re-check these.
   exports no selector and never fires, with no warning. Recorded here and not only in the ticket,
   because it is the kind of trap an implementer hits again on a different delegate.
 
+- **`Theme.sans` scales and `Theme.sansUI` does not, and measuring one with the other is
+  silent.** Found by [08](./issues/08-voiceover-and-large-text.md). `Theme.sans` is
+  `Font.custom(_:size:)`, which scales relative to the **body** text style; `Theme.sansUI`
+  (`Theme/Theme.swift:93`) is a raw `UIFont` and scales not at all. Any height computed for text
+  drawn by the first and measured with the second is a default-size height, whatever the user's
+  text size is - and nothing warns. The mirror is
+  `UIFontMetrics(forTextStyle: .body).scaledFont(for:)`, which 06's field already used and 06's
+  card did not. Recorded here and not only in the ticket, because it is the same trap class as
+  `shouldChangeTextInRanges` and an implementer will hit it again on a different measurement.
+
+- **`.accessibilityActions` reverses the declared order, and `.swipeActions`' own action is not
+  orderable against it.** Found by [08](./issues/08-voiceover-and-large-text.md), by building
+  both orders. The rotor shows the last-declared action first, and the swipe's action lands after
+  every declared one. So an action list has to be written backwards to be heard forwards, and one
+  position in it cannot be chosen at all.
+
 - **A `.contextMenu` preview does not adopt its content's height.** Found by
   [05](./issues/05-the-reveal.md), and it constrains every ticket that touches the long press.
   The preview lays its content out correctly and then masks it, so a card taller than about two
@@ -159,6 +175,32 @@ Looked up, not decided. A ticket does not need to re-check these.
 ## Decisions so far
 
 <!-- one line per resolved ticket -->
+
+- [08 - The reveal, read aloud and at the largest text](./issues/08-voiceover-and-large-text.md) -
+  **a clamp is a height, fixed at what N lines occupy at the default text size**, so the line
+  count falls as the text grows: the Note Card runs **10 lines at L, 7 at XXXL, 5 at AX-L, 3 at
+  AX-XXXL**, and the field's 3-line floor and 6-line ceiling become the same kind of number. One
+  rule, because the card and the sheet were asked the same question. It fixes two defects found
+  by looking: the card **clipped at every size above XXXL** (its height measured with
+  `Theme.sansUI`, which does not scale, while it paints with `Theme.sans`, which does), and the
+  sheet's fitted detent **had no ceiling**, so at AX-XXXL with a long note its top reached 57pt
+  and the Colour Slots sat behind the keyboard, unreachable. A ten-line clamp measured with the
+  scaled font was built and refused: the card is then honest and pushes **"Clear note" off the
+  screen**. A scroll was never a candidate - a `.contextMenu` preview is not interactive.
+  **The phone speaks the note**, so the desktop's known limit 1 does not carry: the row gains
+  `value='Note, <the note>'` on both row shapes, uncapped, and the marker stays silent because a
+  colour is not a label. **The `.contextMenu` adds nothing to the accessibility tree** - dumped
+  with and without, identical - so the row carries **`Edit note`, `Clear note`, `Archive`** as
+  custom actions instead. That order is the platform's: `.accessibilityActions` reverses the
+  declaration order and `Archive` comes from `.swipeActions` and is not orderable. "Destructive
+  last" was recommended, built, and **found unreachable**. The five dots become **"Rose note
+  colour"** and so on, with `sky` spoken as **Blue**, and the ring gains an explicit `Selected`
+  value because `.isSelected` is reported by no tool here. The Note Editor's field **had no
+  accessibility label at all** and gains "Note". **Reduce Motion: the app says nothing**, because
+  there is no API to influence `UIContextMenuInteraction` and the app's own animations already
+  route through `motionAnimation`. **06 is amended once**: its `protoCardHeight` must take the
+  content size category as an input. Eight accepted limits are written for 07 to carry verbatim.
+  Prototype on branch `proto/08-voiceover-and-large-text`.
 
 - [06 - The long-press menu and the Note Editor sheet](./issues/06-menu-and-note-editor-sheet.md) -
   the menu carries **three items** on every row, noted or not: **"Add note…"/"Edit note…"**,

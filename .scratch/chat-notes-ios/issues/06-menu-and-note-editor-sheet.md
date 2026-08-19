@@ -116,6 +116,16 @@ is unchanged and still mandatory - but where 05 dialled that height by hand, 06 
 (`protoCardHeight`, rendered height at the card's width, per chat), because a menu on every row
 cannot be hand-dialled. That computation is the mechanism 07 has to describe.
 
+> **Amended by [08](./08-voiceover-and-large-text.md).** The mechanism is right and the
+> measurement was not. `protoCardHeight` measures with `Theme.sansUI(13)`, a raw `UIFont` that
+> does not scale, while the card paints with `Theme.sans(13)`, which does - so the height is a
+> default-size height and the card **clips at every text size above XXXL**. The computation has
+> to take the content size category as an input, and the ten-line clamp has to become a height.
+> This finding is also why "with both whole on screen" above holds only at the default text
+> size: at AX-XXXL a card measured with the scaled font pushes **"Clear note" off the bottom**,
+> which is what makes 08's height clamp the answer rather than the obvious fix. Everything else
+> in this section stands.
+
 **Question 3 is answered and costs nothing.** The trailing swipe survives on both row shapes,
 driven rather than reasoned about: [the swipe](../assets/06-swipe-survives.png) shows Archive on
 a session row and Unarchive on a shelf row after the menu was added. A long press and a

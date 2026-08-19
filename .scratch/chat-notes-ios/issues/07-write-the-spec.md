@@ -4,7 +4,9 @@ Map: [Chat Notes on iOS](../map.md)
 Type: task
 Status: open
 Blocked by: 01 (resolved), 02 (resolved), 03 (resolved), 04 (resolved), 05 (resolved),
-            06 (resolved), 08
+            06 (resolved), 08 (resolved)
+
+**Unblocked. This is the last ticket on the map.**
 
 ## Question
 
@@ -35,6 +37,14 @@ shape and for standard. Match it:
   and the boundary property carries as a code comment instead, because `String.prefix(_:)` makes
   it impossible to fail.
 - **The Out of scope list carried verbatim** from the map.
+- **An accessibility section, and one rule stated once.**
+  [08](./08-voiceover-and-large-text.md) section 9 holds **eight** accepted limits already
+  written as decisions with reasons; carry them. Its one rule - *a clamp is a height, fixed at
+  what N lines occupy at the default text size* - governs the Note Card, the Note Editor field's
+  floor, and its ceiling, so state it once and apply it three times rather than writing three
+  numbers. 08 also amends [06](./06-menu-and-note-editor-sheet.md): read that amendment before
+  describing `protoCardHeight`'s mechanism, because the mechanism is right and 06's measurement
+  was not.
 
 Two things to settle while writing, not before:
 
