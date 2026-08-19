@@ -344,29 +344,47 @@ fn pinned_layer(layer: AnyElement) -> AnyElement {
         .into_any_element()
 }
 
-/// Eased exit progress (0..=1) for a [`Popup`] closing instant, computed from
-/// the wall clock at render time. Monotonic by construction — unlike the
-/// animation element's own clock, it can never replay from 0 mid-exit.
-fn exit_progress(since: std::time::Instant) -> f32 {
-    let total = motion::MENU_OUT
-        .total()
-        .mul_f32(motion::speed_scale())
-        .as_secs_f32();
+/// Eased progress (0..=1) of a phase that began at `since` and runs for `spec`,
+/// computed from the wall clock at render time. Monotonic by construction —
+/// unlike the animation element's own clock, it can never replay from 0
+/// mid-phase, and unlike that clock it is available while the frame is BUILT,
+/// which is what lets the frost ride it (see [`frosted_menu`]).
+fn phase_progress(spec: motion::MotionSpec, since: std::time::Instant) -> f32 {
+    let total = spec.total().mul_f32(motion::speed_scale()).as_secs_f32();
     let raw = if total <= 0.0 {
         1.0
     } else {
         (since.elapsed().as_secs_f32() / total).clamp(0.0, 1.0)
     };
-    motion::MENU_OUT.progress(raw)
+    spec.progress(raw)
 }
 
-/// The frosted card for a popover layer: full blur while open; while exiting
-/// the blur radius rides the exit progress down to 0 — the `BackdropBlur`
-/// primitive ignores `element_opacity`, so without this the glass slab would
-/// hold full strength through the fade and pop off at unmount.
-fn frosted_menu(exit: Option<f32>, content: AnyElement) -> AnyElement {
-    let blur = crate::frost::MENU_BLUR * (1.0 - exit.unwrap_or(0.0));
+fn exit_progress(since: std::time::Instant) -> f32 {
+    phase_progress(motion::MENU_OUT, since)
+}
+
+fn enter_progress(since: std::time::Instant) -> f32 {
+    phase_progress(motion::MENU_IN, since)
+}
+
+/// The frosted card for a popover layer: full blur while open, and the blur
+/// radius rides either transition — the `BackdropBlur` primitive ignores
+/// `element_opacity`, so a fixed radius would put a full-strength glass slab on
+/// screen before the card that owns it has faded in, and hold it there after
+/// the card has faded out.
+fn frosted_menu(blur_scale: f32, content: AnyElement) -> AnyElement {
+    let blur = crate::frost::MENU_BLUR * blur_scale.clamp(0.0, 1.0);
     crate::frost::frosted(CARD_RADIUS, blur, content).into_any_element()
+}
+
+/// How much of the frost is on screen this frame: the exit wins while one is
+/// running, an entrance ramps it up, and a settled layer carries all of it.
+fn blur_scale(enter: Option<f32>, exit: Option<f32>) -> f32 {
+    match (enter, exit) {
+        (_, Some(t)) => 1.0 - t,
+        (Some(t), None) => t,
+        (None, None) => 1.0,
+    }
 }
 
 /// Entrance or exit motion for a popover layer. While exiting (the [`Popup`]
@@ -377,11 +395,25 @@ fn frosted_menu(exit: Option<f32>, content: AnyElement) -> AnyElement {
 /// and the overlay also keeps stray clicks from reaching whatever sits
 /// underneath.
 fn menu_motion(id: SharedString, exit: Option<f32>, inner: gpui::Div) -> AnyElement {
-    if let Some(t) = exit {
-        let inner = inner.relative().child(div().absolute().inset_0().occlude());
-        motion::menu_out(SharedString::from(format!("{id}-out")), t, inner).into_any_element()
-    } else {
-        motion::menu_in(id, inner).into_any_element()
+    menu_motion_phased(id, None, exit, inner)
+}
+
+/// [`menu_motion`] with the entrance ALSO driven by the caller's clock rather
+/// than the animation element's, for layers that want [`motion::menu_in_at`]'s
+/// fade-from-zero instead of `menu_in`'s snap to a third of full opacity.
+fn menu_motion_phased(
+    id: SharedString,
+    enter: Option<f32>,
+    exit: Option<f32>,
+    inner: gpui::Div,
+) -> AnyElement {
+    match (enter, exit) {
+        (_, Some(t)) => {
+            let inner = inner.relative().child(div().absolute().inset_0().occlude());
+            motion::menu_out(SharedString::from(format!("{id}-out")), t, inner).into_any_element()
+        }
+        (Some(t), None) => motion::menu_in_at(id, t, inner).into_any_element(),
+        (None, None) => motion::menu_in(id, inner).into_any_element(),
     }
 }
 
@@ -398,7 +430,7 @@ pub fn anchored_menu(
     closing: Option<std::time::Instant>,
 ) -> AnyElement {
     let exit = closing.map(exit_progress);
-    let content = frosted_menu(exit, content);
+    let content = frosted_menu(blur_scale(None, exit), content);
     pinned_layer(
         gpui::deferred(
             gpui::anchored()
@@ -437,7 +469,7 @@ pub fn anchored_menu_below_gap(
     gap: f32,
 ) -> AnyElement {
     let exit = closing.map(exit_progress);
-    let content = frosted_menu(exit, content);
+    let content = frosted_menu(blur_scale(None, exit), content);
     div()
         .absolute()
         .bottom_0()
@@ -469,7 +501,7 @@ pub fn anchored_menu_above(
     closing: Option<std::time::Instant>,
 ) -> AnyElement {
     let exit = closing.map(exit_progress);
-    let content = frosted_menu(exit, content);
+    let content = frosted_menu(blur_scale(None, exit), content);
     pinned_layer(
         gpui::deferred(
             gpui::anchored()
@@ -513,7 +545,7 @@ pub fn anchored_menu_above_end(
     closing: Option<std::time::Instant>,
 ) -> AnyElement {
     let exit = closing.map(exit_progress);
-    let content = frosted_menu(exit, content);
+    let content = frosted_menu(blur_scale(None, exit), content);
     div()
         .absolute()
         .top_0()
@@ -544,14 +576,57 @@ pub fn menu_at(
     content: AnyElement,
     closing: Option<std::time::Instant>,
 ) -> AnyElement {
+    menu_at_phased(id, position, content, None, closing)
+}
+
+/// [`menu_at`] for a layer that must MATERIALISE rather than snap in, and the
+/// eased entrance progress to hand it (`opened` is when it appeared).
+///
+/// A menu is small, quick and asked for; a hover card is large, unasked for,
+/// and arrives under a pointer that is holding still. Three things separate
+/// them, and all three need the entrance progress at the time the frame is
+/// BUILT, which an element-keyed animation cannot give:
+///
+/// - **The fade starts at zero**, where `menu_in` snaps to 0.3 and fades the
+///   rest. On a menu that reads as speed; on a card the size of a paragraph it
+///   reads as a pop.
+/// - **The frost ramps with the fade.** `BackdropBlur` ignores
+///   `element_opacity`, so a fixed radius puts a fully blurred slab on screen
+///   a whole frame before the card that explains it.
+/// - **The caller gets `t` back**, so any motion of its own — the Note Card's
+///   10px arrival from the sidebar — rides the same clock instead of a second
+///   animation that can drift against this one.
+pub fn hover_card_at(
+    id: impl Into<SharedString>,
+    position: Point<Pixels>,
+    content: impl FnOnce(f32) -> AnyElement,
+    opened: std::time::Instant,
+    closing: Option<std::time::Instant>,
+) -> AnyElement {
+    let enter = enter_progress(opened);
+    menu_at_phased(id, position, content(enter), Some(enter), closing)
+}
+
+fn menu_at_phased(
+    id: impl Into<SharedString>,
+    position: Point<Pixels>,
+    content: AnyElement,
+    enter: Option<f32>,
+    closing: Option<std::time::Instant>,
+) -> AnyElement {
     let exit = closing.map(exit_progress);
-    let content = frosted_menu(exit, content);
+    let content = frosted_menu(blur_scale(enter, exit), content);
     gpui::deferred(
         gpui::anchored()
             .position(position)
             .anchor(Anchor::TopLeft)
             .snap_to_window_with_margin(px(8.0))
-            .child(menu_motion(id.into(), exit, div().occlude().child(content))),
+            .child(menu_motion_phased(
+                id.into(),
+                enter,
+                exit,
+                div().occlude().child(content),
+            )),
     )
     .priority(1)
     .into_any_element()
@@ -1054,6 +1129,26 @@ mod tests {
         assert!(!popup.take_press_was_open());
         popup.note_trigger_press_matching(|kind| *kind == 1);
         assert!(popup.take_press_was_open());
+    }
+
+    /// The frost has to follow whichever transition is running, because
+    /// `BackdropBlur` ignores `element_opacity` and would otherwise be a glass
+    /// slab on screen without the card that explains it.
+    #[test]
+    fn the_frost_follows_whichever_transition_is_running() {
+        // Settled: all of it.
+        assert_eq!(blur_scale(None, None), 1.0);
+        // Entering: up with the fade, from nothing.
+        assert_eq!(blur_scale(Some(0.0), None), 0.0);
+        assert_eq!(blur_scale(Some(0.5), None), 0.5);
+        assert_eq!(blur_scale(Some(1.0), None), 1.0);
+        // Exiting: down with the fade. Unchanged from before there was an
+        // entrance phase, which is what keeps every existing menu identical.
+        assert_eq!(blur_scale(None, Some(0.25)), 0.75);
+        // A card closed BEFORE its entrance finished is the case that needs
+        // the ordering: the exit wins, or the frost would ramp back up under
+        // a card that is on its way out.
+        assert_eq!(blur_scale(Some(0.2), Some(0.25)), 0.75);
     }
 
     #[test]

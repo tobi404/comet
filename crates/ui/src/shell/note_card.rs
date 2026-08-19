@@ -308,6 +308,39 @@ pub(super) struct NoteCard {
     /// id, so every open plays the fade from the start. A reused id would
     /// inherit the previous open's finished clock and snap to the end state.
     pub entrance: u64,
+    /// When the card became visible. The entrance's progress is read off this
+    /// wall clock rather than off the animation element's, which is what lets
+    /// the frost ramp with the fade — see [`popover::hover_card_at`].
+    pub opened: std::time::Instant,
+}
+
+/// What the render site owes the card on this frame.
+///
+/// [`Phase::Waiting`] is the reason the card renders at all during its own open
+/// delay. The entrance is 140ms and the delay before it is 350ms, so measuring
+/// the card inside the delay costs nothing anyone can see and buys the entrance
+/// a surface that is already its final size, with its elide already resolved. A
+/// fade playing over a card that is still deciding how big it is reads as a
+/// stutter no easing can hide.
+enum Phase {
+    Waiting {
+        chat: String,
+    },
+    Shown {
+        chat: String,
+        anchor: Bounds<Pixels>,
+        opened: std::time::Instant,
+        closing: Option<std::time::Instant>,
+        entrance: u64,
+    },
+}
+
+impl Phase {
+    fn chat(&self) -> &str {
+        match self {
+            Phase::Waiting { chat } | Phase::Shown { chat, .. } => chat,
+        }
+    }
 }
 
 /// The 350ms open delay. `generation` guards a stale timer — a fresh wait for
@@ -605,6 +638,7 @@ impl Shell {
             epoch: self.resort_epoch,
             scroll: self.sidebar_scroll.offset(),
             entrance: generation,
+            opened: std::time::Instant::now(),
         });
         cx.notify();
     }
@@ -668,6 +702,8 @@ impl Shell {
     /// The one render site, called from [`Shell::render_overlays`]. It serves
     /// the active rows and the archived shelf alike — the card does not care
     /// which list its row came from.
+    ///
+    /// It renders in the 350ms open delay too, invisibly. See [`Phase`].
     pub(super) fn render_note_card(
         &mut self,
         viewport: Size<Pixels>,
@@ -688,15 +724,8 @@ impl Shell {
         }
 
         let theme = Theme::of(cx).clone();
-        let closing = self.note_card.closing_since();
-        let (chat, opened_at, entrance) = {
-            let card = self.note_card.get()?;
-            (card.chat.clone(), card.anchor, card.entrance)
-        };
-        // The live anchor while the pointer is still on the row; the bounds the
-        // card opened at once it is not (the probe unmounts with the hover, and
-        // a card mid-exit must not jump).
-        let anchor = self.note_card_anchor.bounds_for(&chat).unwrap_or(opened_at);
+        let phase = self.note_card_phase()?;
+        let chat = phase.chat().to_string();
 
         // A `WatchChats` frame can clear the note while its card is up.
         let Some(note) = self
@@ -725,14 +754,50 @@ impl Shell {
 
         // The text box's size from an earlier frame. Its WIDTH is what makes
         // the elide correct (see `TextBoxCache`); its height is what centres
-        // the card. Absent, this is the frame that measures both.
+        // the card.
         let measured = self.note_card_heights.get(&text, width);
+        let colour = crate::theme::note_slot_color(&note.color);
+        let left = px(left_for(sidebar_now));
+
+        let Phase::Shown {
+            anchor,
+            opened,
+            closing,
+            entrance,
+            ..
+        } = phase
+        else {
+            // Still inside the open delay. Once the size is known there is
+            // nothing left to do until the card is due.
+            if measured.is_some() {
+                return None;
+            }
+            // Otherwise spend a frame of the delay measuring it. Invisible,
+            // inert, and gone by the time anything is on screen — but it is
+            // what lets the entrance below play over a card that is already
+            // its final size, with its elide already resolved.
+            return Some(
+                gpui::deferred(
+                    gpui::anchored()
+                        .position(point(left, px(MARGIN)))
+                        .anchor(gpui::Anchor::TopLeft)
+                        .child(
+                            div()
+                                .opacity(0.0)
+                                .child(self.note_card_body(&text, colour, width, None, &theme)),
+                        ),
+                )
+                .priority(0)
+                .into_any_element(),
+            );
+        };
+
         let height = measured.map_or_else(
             || estimate_height(text.chars().count(), width),
             |size| f32::from(size.height),
         ) + 2.0 * BORDER;
         let position = point(
-            px(left_for(sidebar_now)),
+            left,
             px(top_for(
                 f32::from(anchor.center().y),
                 height,
@@ -740,9 +805,72 @@ impl Shell {
             )),
         );
 
-        let colour = crate::theme::note_slot_color(&note.color);
-        let measure = self.note_card_heights.writer(&text, width);
-        let card = popover::popover_card_flush(&theme)
+        let body = self.note_card_body(&text, colour, width, measured, &theme);
+        let card = body
+            // Any mouse-down closes the card. `_out` covers the row underneath
+            // and everything else in the window; the pointer can also be over
+            // the card itself during the 120ms leave, so it takes its own.
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| shell.dismiss_note_card(cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, cx| shell.dismiss_note_card(cx)),
+            )
+            .into_any_element();
+
+        Some(popover::hover_card_at(
+            format!("note-card-{entrance}"),
+            position,
+            // Arrives FROM the sidebar: 10px of leftward offset resolving to
+            // zero across the entrance. It rides the entrance's own progress
+            // rather than a second animation, so the slide, the fade and the
+            // frost cannot drift a frame apart.
+            move |enter| {
+                div()
+                    .relative()
+                    .left(px(-SLIDE * (1.0 - enter)))
+                    .child(card)
+                    .into_any_element()
+            },
+            opened,
+            closing,
+        ))
+    }
+
+    /// What the card needs this frame, or `None` when it needs nothing.
+    fn note_card_phase(&self) -> Option<Phase> {
+        match self.note_card.get() {
+            Some(card) => Some(Phase::Shown {
+                // The live anchor while the pointer is still on the row; the
+                // bounds the card opened at once it is not (the probe unmounts
+                // with the hover, and a card mid-exit must not jump).
+                anchor: self
+                    .note_card_anchor
+                    .bounds_for(&card.chat)
+                    .unwrap_or(card.anchor),
+                opened: card.opened,
+                closing: self.note_card.closing_since(),
+                entrance: card.entrance,
+                chat: card.chat.clone(),
+            }),
+            None => self.note_card_wait.as_ref().map(|wait| Phase::Waiting {
+                chat: wait.chat.clone(),
+            }),
+        }
+    }
+
+    /// The card itself: frost, the note's tint and hairline, and the text.
+    /// Built the same way for the visible card and for the invisible frame that
+    /// measures it, because a measurement of anything else would not be one.
+    fn note_card_body(
+        &self,
+        text: &SharedString,
+        colour: gpui::Hsla,
+        width: f32,
+        measured: Option<Size<Pixels>>,
+        theme: &Theme,
+    ) -> gpui::Div {
+        let measure = self.note_card_heights.writer(text, width);
+        popover::popover_card_flush(theme)
             // The card's own hairline, in the note's colour.
             .border_color(colour.opacity(0.32))
             .relative()
@@ -762,11 +890,11 @@ impl Shell {
             .child(
                 div()
                     .relative()
-                    // Pinned to the width the content asked for on the frame
-                    // before; a cap on the first frame, when nothing may
-                    // truncate. An unbreakable token wider than the cap clips
-                    // against the card's `overflow_hidden` instead of widening
-                    // it.
+                    // Pinned to the width the content asked for while it was
+                    // being measured; a cap during that measurement, when
+                    // nothing may truncate. An unbreakable token wider than the
+                    // cap clips against the card's `overflow_hidden` instead of
+                    // widening it.
                     .map(|el| match measured {
                         Some(size) => el.w(size.width),
                         None => el.max_w(px(width)),
@@ -777,12 +905,13 @@ impl Shell {
                     .line_height(px(LINE_HEIGHT))
                     .text_color(theme.text)
                     // The card never scrolls: ten lines, then elide. The elide
-                    // waits for the pinned width — asked for it a frame early
-                    // it truncates against a candidate width taffy was only
-                    // trying on, and the card stops short of the clamp.
+                    // waits for the pinned width — asked for it while the width
+                    // is still free it truncates against a candidate width
+                    // taffy was only trying on, and the card stops short of the
+                    // clamp.
                     .line_clamp(LINE_CLAMP)
                     .when(measured.is_some(), |el| el.text_ellipsis())
-                    // Measures the text box for the next frame: its height
+                    // Measures the text box for the frames after: its height
                     // centres the card, its width pins this element.
                     .child(
                         gpui::canvas(
@@ -794,33 +923,6 @@ impl Shell {
                     )
                     .child(text.clone()),
             )
-            // Any mouse-down closes the card. `_out` covers the row underneath
-            // and everything else in the window; the pointer can also be over
-            // the card itself during the 120ms leave, so it takes its own.
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| shell.dismiss_note_card(cx)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|shell, _, _, cx| shell.dismiss_note_card(cx)),
-            );
-
-        let content = div()
-            .relative()
-            .child(card)
-            // Arrives FROM the sidebar: 10px of leftward offset resolving to
-            // zero across `MENU_IN`, under the fade `menu_at` already plays.
-            .with_animation(
-                SharedString::from(format!("note-card-slide-{entrance}")),
-                motion::MENU_IN.animation(),
-                |el, t| el.left(px(-SLIDE * (1.0 - t))),
-            )
-            .into_any_element();
-
-        Some(popover::menu_at(
-            format!("note-card-{entrance}"),
-            position,
-            content,
-            closing,
-        ))
     }
 }
 

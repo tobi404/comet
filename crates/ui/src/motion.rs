@@ -351,6 +351,28 @@ where
     })
 }
 
+/// [`menu_in`] driven by the CALLER's eased progress, and fading from zero
+/// rather than from `menu_in`'s 0.3.
+///
+/// Two reasons a layer wants this instead of [`menu_in`], both of them about
+/// large surfaces. The 0.3 floor is a menu's trick — it buys apparent speed on
+/// something small and expected, and reads as a pop on something the size of a
+/// paragraph. And `t` arriving from the caller means it is known while the
+/// frame is BUILT, so build-time properties can ride the entrance too; the
+/// backdrop blur under [`crate::popover::hover_card_at`] is one, and it cannot
+/// be animated any other way (`BackdropBlur` ignores `element_opacity`).
+///
+/// As with [`menu_out`], the animation wrapper here only pumps frames — its own
+/// delta is unused, so a remount cannot replay the entrance as a flash.
+pub fn menu_in_at<E>(id: impl Into<ElementId>, t: f32, element: E) -> AnimationElement<E>
+where
+    E: Styled + IntoElement + 'static,
+{
+    element.with_animation(id, MENU_IN.animation(), move |el, _| {
+        el.relative().opacity(t).top(px(-2.0 * (1.0 - t)))
+    })
+}
+
 /// Popover exit: the reverse of [`menu_in`] — fade to 0 + translateY 0→−2 over
 /// [`MENU_OUT`]. Unlike the entrances, the eased progress `t` comes from the
 /// caller (computed off [`crate::popover::Popup`]'s closing instant at render
