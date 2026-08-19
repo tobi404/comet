@@ -83,6 +83,22 @@ pub struct ChatConfig {
     pub sandbox: SandboxLevel,
 }
 
+/// A user-authored Chat Note: one short text with one Colour Slot. Text and
+/// colour are one indivisible value — a Chat has a whole note or no note,
+/// never half of one (ADR 0001: the note syncs as ONE registry field under
+/// whole-note LWW, so concurrent edits never merge).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatNote {
+    pub text: String,
+    /// Colour Slot id — one of `rose` `amber` `green` `sky` `violet`. A
+    /// neutral slot string (never an index, never hex) so palette reorders
+    /// and re-tunes don't repaint existing notes. Not validated here: iOS
+    /// writes registry rows directly, so an id list could never be an
+    /// invariant, only a compatibility hazard.
+    pub color: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Chat {
@@ -126,6 +142,9 @@ pub struct Chat {
     /// dials the room the registry names. Per-chat and instantly revertible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_gen: Option<u32>,
+    /// The Chat Note, whole or absent (see [`ChatNote`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<ChatNote>,
 }
 
 impl Chat {

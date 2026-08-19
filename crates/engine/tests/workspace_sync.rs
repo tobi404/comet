@@ -345,6 +345,106 @@ async fn two_engines_share_a_workspace() {
     b.shutdown().await;
 }
 
+/// The Chat Note write path end to end (chat-notes spec §2): a `setChatNote`
+/// Mutate on one device lands in the registry doc, syncs, and reaches the
+/// other device's WatchChats stream; `null` clears; empty text clears; an
+/// omitted `note` field is a deserialisation error, never a clear.
+#[tokio::test]
+async fn chat_note_crosses_devices_and_null_clears() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let a = assemble(dir_a.path(), "dev-a");
+    let b = assemble(dir_b.path(), "dev-b");
+    let link = bridge(&a, &b).await;
+
+    let client_a = zeron_rpc::memory_client(a.rpc_service());
+    let client_b = zeron_rpc::memory_client(b.rpc_service());
+    client_a
+        .call(
+            methods::MUTATE,
+            serde_json::json!({
+                "op": "createSpace", "spaceId": "space-1", "deviceId": "dev-a", "path": "/tmp"
+            }),
+        )
+        .await
+        .expect("create space");
+    client_a
+        .call(
+            methods::MUTATE,
+            serde_json::json!({ "op": "createChat", "chatId": "chat-1", "spaceId": "space-1" }),
+        )
+        .await
+        .expect("create chat");
+    wait_for(
+        || b.workspace.chat("chat-1").ok().flatten().is_some(),
+        "chat row on B",
+    )
+    .await;
+
+    // Set from B; the note reaches A's WatchChats stream (no local echo path
+    // exists — the stream is the only way any UI state learns of the note).
+    let mut a_chats = a.workspace.watch_chats();
+    client_b
+        .call(
+            methods::MUTATE,
+            serde_json::json!({
+                "op": "setChatNote", "chatId": "chat-1",
+                "note": { "text": "ship it", "color": "sky" }
+            }),
+        )
+        .await
+        .expect("set note");
+    let mut note_on_a = || {
+        a_chats
+            .borrow_and_update()
+            .iter()
+            .find(|c| c.id == "chat-1")
+            .and_then(|c| c.note.clone())
+    };
+    wait_for(
+        || note_on_a().is_some_and(|n| n.text == "ship it" && n.color == "sky"),
+        "note on A's watch stream",
+    )
+    .await;
+
+    // Explicit null clears everywhere.
+    client_b
+        .call(
+            methods::MUTATE,
+            serde_json::json!({ "op": "setChatNote", "chatId": "chat-1", "note": null }),
+        )
+        .await
+        .expect("clear note");
+    wait_for(|| note_on_a().is_none(), "note cleared on A").await;
+
+    // Empty text is a clear too (engine-side guard).
+    client_b
+        .call(
+            methods::MUTATE,
+            serde_json::json!({
+                "op": "setChatNote", "chatId": "chat-1",
+                "note": { "text": "   ", "color": "rose" }
+            }),
+        )
+        .await
+        .expect("empty-text note");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(note_on_a(), None, "blank note must never be stored");
+
+    // An omitted `note` field is a deserialisation error, NOT a clear.
+    client_b
+        .call(
+            methods::MUTATE,
+            serde_json::json!({ "op": "setChatNote", "chatId": "chat-1" }),
+        )
+        .await
+        .expect_err("omitted note must be rejected");
+
+    drop(link);
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
 #[tokio::test]
 async fn claim_on_first_command_creates_the_chat_row() {
     let dir_a = tempfile::tempdir().unwrap();
@@ -664,6 +764,7 @@ async fn legacy_workspace_doc_migrates_instantly_on_first_boot() {
                 harness_session_cwd: Some("/tmp/legacy".into()),
                 space_id: Some("space-legacy".into()),
                 last_seen_at: Some(now),
+                note: None,
             })
             .unwrap();
         legacy

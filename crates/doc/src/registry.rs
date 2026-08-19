@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use zeron_proto::{Chat, ChatConfig, Device, Session, Space};
+use zeron_proto::{Chat, ChatConfig, ChatNote, Device, Session, Space};
 
 use crate::schema::DocError;
 use crate::workspace::{DeletedSpace, WorkspaceState};
@@ -850,6 +850,13 @@ impl RegistryDoc {
                 "roomGen",
                 chat.room_gen.map(|g| json!(g)).unwrap_or(Value::Null),
             ),
+            (
+                "note",
+                match &chat.note {
+                    Some(note) => serde_json::to_value(note)?,
+                    None => Value::Null,
+                },
+            ),
         ]);
         self.write(KIND_CHATS, &chat.id.clone(), OpKind::Upsert, set);
         Ok(())
@@ -939,6 +946,47 @@ impl RegistryDoc {
             chat_id,
             OpKind::Update,
             fields([("archived", json!(archived))]),
+        );
+        Ok(true)
+    }
+
+    /// Set or clear the Chat Note — ONE registry field (`note`), replaced
+    /// wholesale so concurrent edits resolve by whole-note LWW (ADR 0001).
+    /// `None` clears via the registry's `Value::Null` field delete.
+    pub fn set_chat_note(
+        &mut self,
+        chat_id: &str,
+        note: Option<&ChatNote>,
+    ) -> Result<bool, DocError> {
+        if !self.row_exists(KIND_CHATS, chat_id) {
+            return Ok(false);
+        }
+        // 280-character guard (characters, not bytes; the cut lands on a
+        // character boundary). An authoring affordance, NOT a storage
+        // invariant: iOS writes rows directly past this path, so renderers
+        // must tolerate any length (known limit 6).
+        const NOTE_MAX_CHARS: usize = 280;
+        let note = note.map(|note| {
+            let mut note = note.clone();
+            if note.text.chars().count() > NOTE_MAX_CHARS {
+                note.text = note.text.chars().take(NOTE_MAX_CHARS).collect();
+            }
+            note
+        });
+        // Empty text means delete, enforced here too (not only in the Note
+        // Editor), so no caller of this mutator can store a blank note that
+        // renders as an invisible marker. Checked AFTER the cut: text that is
+        // blank only within the kept 280 characters must clear too.
+        let note = note.filter(|note| !note.text.trim().is_empty());
+        let value = match note {
+            Some(note) => serde_json::to_value(note)?,
+            None => Value::Null,
+        };
+        self.write(
+            KIND_CHATS,
+            chat_id,
+            OpKind::Update,
+            fields([("note", value)]),
         );
         Ok(true)
     }

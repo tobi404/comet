@@ -28,7 +28,7 @@ use chrono::{DateTime, Utc};
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ToJson};
 use serde::{Deserialize, Serialize};
 
-use zeron_proto::{Chat, ChatConfig, Device, Session, SessionStatus, Space};
+use zeron_proto::{Chat, ChatConfig, ChatNote, Device, Session, SessionStatus, Space};
 
 use crate::schema::DocError;
 
@@ -649,6 +649,8 @@ pub(crate) struct RawChat {
     last_seen_at: Option<i64>,
     #[serde(default)]
     room_gen: Option<u32>,
+    #[serde(default)]
+    note: Option<ChatNote>,
 }
 
 impl From<RawChat> for Chat {
@@ -670,6 +672,7 @@ impl From<RawChat> for Chat {
             space_id: raw.space_id,
             last_seen_at: raw.last_seen_at.map(dt),
             room_gen: raw.room_gen,
+            note: raw.note,
         }
     }
 }
@@ -742,6 +745,7 @@ mod tests {
             space_id: None,
             last_seen_at: None,
             room_gen: None,
+            note: None,
         }
     }
 

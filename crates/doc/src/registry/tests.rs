@@ -4,7 +4,7 @@
 //! tested, not asserted.
 
 use super::*;
-use zeron_proto::{HarnessId, SandboxLevel, SessionStatus};
+use zeron_proto::{ChatNote, HarnessId, SandboxLevel, SessionStatus};
 
 fn ts(ms: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(ms).unwrap_or(DateTime::UNIX_EPOCH)
@@ -272,6 +272,7 @@ fn chat(id: &str, device_id: &str) -> Chat {
         space_id: None,
         last_seen_at: None,
         room_gen: None,
+        note: None,
     }
 }
 
@@ -393,6 +394,179 @@ fn field_mutators_round_trip() {
     let dev = &ws.read_devices().unwrap()[0];
     assert_eq!(dev.name, "workstation");
     assert_eq!(dev.last_seen_at, Some(ts(6_000)));
+}
+
+fn note(text: &str, color: &str) -> ChatNote {
+    ChatNote {
+        text: text.into(),
+        color: color.into(),
+    }
+}
+
+#[test]
+fn chat_note_sets_and_reads_back_whole() {
+    let mut ws = RegistryDoc::new("dev-a");
+    ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
+
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note("ship it", "sky")))
+            .unwrap()
+    );
+    assert_eq!(
+        ws.chat("chat-1").unwrap().unwrap().note,
+        Some(note("ship it", "sky"))
+    );
+}
+
+#[test]
+fn chat_note_clears_via_null() {
+    let mut ws = RegistryDoc::new("dev-a");
+    ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
+
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note("ship it", "sky")))
+            .unwrap()
+    );
+    assert!(ws.set_chat_note("chat-1", None).unwrap());
+    assert_eq!(ws.chat("chat-1").unwrap().unwrap().note, None);
+}
+
+/// Spec §2: empty text means delete, enforced engine-side too, so no caller
+/// can ever store a blank note that renders as an invisible bar.
+#[test]
+fn chat_note_treats_empty_or_whitespace_text_as_a_clear() {
+    let mut ws = RegistryDoc::new("dev-a");
+    ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
+
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note("keep", "rose")))
+            .unwrap()
+    );
+    assert!(ws.set_chat_note("chat-1", Some(&note("", "rose"))).unwrap());
+    assert_eq!(ws.chat("chat-1").unwrap().unwrap().note, None);
+
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note("keep", "rose")))
+            .unwrap()
+    );
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note(" \t\n ", "rose")))
+            .unwrap()
+    );
+    assert_eq!(ws.chat("chat-1").unwrap().unwrap().note, None);
+
+    // Text that is blank only AFTER the 280-character cut (280 spaces, then a
+    // real character) must clear too, never store an all-whitespace note.
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note("keep", "rose")))
+            .unwrap()
+    );
+    let blank_after_cut = format!("{}x", " ".repeat(280));
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note(&blank_after_cut, "rose")))
+            .unwrap()
+    );
+    assert_eq!(ws.chat("chat-1").unwrap().unwrap().note, None);
+}
+
+/// Spec §2 / known limit 6: the 280-character cap is a write-path guard (an
+/// authoring affordance), counted in characters — multibyte text truncates on
+/// a character boundary, never mid-scalar.
+#[test]
+fn chat_note_truncates_text_at_280_characters() {
+    let mut ws = RegistryDoc::new("dev-a");
+    ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
+
+    let long = "é".repeat(300);
+    assert!(
+        ws.set_chat_note("chat-1", Some(&note(&long, "amber")))
+            .unwrap()
+    );
+    let stored = ws.chat("chat-1").unwrap().unwrap().note.unwrap();
+    assert_eq!(stored.text.chars().count(), 280);
+    assert_eq!(stored.text, "é".repeat(280));
+    assert_eq!(stored.color, "amber");
+}
+
+/// Spec §2: `OpKind::Update` never creates a row, so a note write against a
+/// deleted (or never-created) chat is a no-op returning false — it must not
+/// revive the tombstone.
+#[test]
+fn chat_note_on_a_dead_chat_is_a_no_op_returning_false() {
+    let mut ws = RegistryDoc::new("dev-a");
+    assert!(
+        !ws.set_chat_note("never-existed", Some(&note("x", "rose")))
+            .unwrap()
+    );
+
+    ws.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
+    assert!(ws.delete_chat("chat-1").unwrap());
+    assert!(
+        !ws.set_chat_note("chat-1", Some(&note("x", "rose")))
+            .unwrap()
+    );
+    assert!(ws.read_chats().unwrap().is_empty());
+}
+
+/// Concurrent edits resolve to ONE whole note under LWW: the newer clock wins
+/// outright, nothing merges. The note is a single registry field (ADR 0001),
+/// so the loser's text can never end up beside the winner's colour.
+#[test]
+fn concurrent_chat_note_edits_resolve_whole_note_newer_clock_wins_outright_nothing_merges() {
+    let mut a = RegistryDoc::new("dev-a");
+    let mut b = RegistryDoc::new("dev-b");
+    a.upsert_chat(&chat("chat-1", "dev-a")).unwrap();
+
+    let mut server = HashMap::new();
+    let mut seq = 0u64;
+    server_round(&mut server, &mut seq, &mut [&mut a, &mut b]);
+
+    // Both devices edit the note concurrently, differing in BOTH text and
+    // colour. The sleep keeps the HLCs out of the same-millisecond device-id
+    // tiebreak, so dev-b's clock is deterministically newer.
+    a.set_chat_note("chat-1", Some(&note("from a", "rose")))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    b.set_chat_note("chat-1", Some(&note("from b", "violet")))
+        .unwrap();
+    server_round(&mut server, &mut seq, &mut [&mut a, &mut b]);
+
+    // The newer clock wins outright, nothing merges: both docs settle on
+    // dev-b's whole note; dev-a's edit is lost outright (deliberate, ADR 0001).
+    for doc in [&a, &b] {
+        assert_eq!(
+            doc.chat("chat-1").unwrap().unwrap().note,
+            Some(note("from b", "violet"))
+        );
+    }
+}
+
+/// Known limit 6: the 280-character cap guards only this device's write path.
+/// iOS writes registry rows directly, so a longer stored text must still read
+/// back untruncated — renderers tolerate any length.
+#[test]
+fn chat_note_storage_tolerates_text_past_the_authoring_cap() {
+    let mut ws = RegistryDoc::new("dev-a");
+
+    // Simulate the foreign writer: a server-merged row (not this device's
+    // write path) carrying a 671-character note.
+    let long = "n".repeat(671);
+    let row = applied(
+        None,
+        &upsert(
+            &[
+                ("id", json!("chat-1")),
+                ("deviceId", json!("dev-ios")),
+                ("createdAt", json!(2_000)),
+                ("note", json!({ "text": long, "color": "green" })),
+            ],
+            9_000,
+        ),
+    );
+    ws.apply_rows(1, vec![row]);
+
+    let stored = ws.chat("chat-1").unwrap().unwrap().note.unwrap();
+    assert_eq!(stored.text.chars().count(), 671);
 }
 
 #[test]

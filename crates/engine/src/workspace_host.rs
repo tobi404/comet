@@ -26,7 +26,7 @@ use chrono::Utc;
 use tokio::sync::watch;
 
 use zeron_doc::{DeletedSpace, REGISTRY_DOC_ID, RegistryDoc, WorkspaceDoc};
-use zeron_proto::{Chat, ChatConfig, Device, Session, Space};
+use zeron_proto::{Chat, ChatConfig, ChatNote, Device, Session, Space};
 use zeron_sync::{DocsStore, RegistryClient, RegistryTuning};
 
 use crate::doc_host::EdgeConfig;
@@ -750,6 +750,7 @@ impl WorkspaceHost {
                 harness_session_cwd: None,
                 space_id: space.as_ref().map(|s| s.id.clone()),
                 last_seen_at: None,
+                note: None,
             })
         })?;
         Ok(())
@@ -898,6 +899,17 @@ impl WorkspaceHost {
 
     pub fn set_chat_archived(&self, chat_id: &str, archived: bool) -> Result<bool, EngineError> {
         Ok(self.mutate(|doc| doc.set_chat_archived(chat_id, archived))?)
+    }
+
+    /// Whole-note LWW set/clear on the chat row (`None` clears; empty-text
+    /// and 280-char guards live in the doc layer). Returns false when the
+    /// chat doesn't exist — an Update never invents rows.
+    pub fn set_chat_note(
+        &self,
+        chat_id: &str,
+        note: Option<&ChatNote>,
+    ) -> Result<bool, EngineError> {
+        Ok(self.mutate(|doc| doc.set_chat_note(chat_id, note))?)
     }
 
     /// LWW full-config replace on the chat row (zeron `SetChatConfig` — the

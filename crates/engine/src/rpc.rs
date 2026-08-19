@@ -11,8 +11,8 @@
 //! - `WatchSessions` → stream of `Session[]`: this engine's live statuses merged with
 //!   remote devices' workspace session rows
 //! - `Mutate {op, …}` → `{ok}` — workspace entity mutations (createChat, renameChat,
-//!   setChatArchived, deleteChat, clearArchivedChats, renameDevice,
-//!   markChatSeen)
+//!   setChatArchived, setChatNote, deleteChat, clearArchivedChats,
+//!   renameDevice, markChatSeen)
 //! - `EngineInfo` → `{deviceId, workspaceScope}` — this runtime's fixed identity
 //!   and data boundary (never forwarded)
 //! - `LocalDevice` → `{deviceId}` — legacy engine identity (never forwarded)
@@ -58,7 +58,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use zeron_doc::{MessagePart, SessionCommandPayload};
-use zeron_proto::{ChatConfig, EngineInfo, HarnessId, ToolCall, WorkspaceScope};
+use zeron_proto::{ChatConfig, ChatNote, EngineInfo, HarnessId, ToolCall, WorkspaceScope};
 use zeron_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params};
 
 use crate::agent_accounts::AgentAccounts;
@@ -290,6 +290,17 @@ struct FetchToolBlobParams {
     blob_ref: String,
 }
 
+/// Present-but-nullable field: `null` → `None`, while an OMITTED field stays
+/// a deserialisation error (serde's bare-`Option` special case would silently
+/// default it to `None`).
+fn required_nullable<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 /// The Mutate surface (feature-inventory §2 DataRpc), tagged by `op`.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
@@ -366,6 +377,17 @@ enum MutateParams {
     SetChatHost { chat_id: String, device_id: String },
     #[serde(rename_all = "camelCase")]
     SetChatArchived { chat_id: String, archived: bool },
+    /// Whole-note set/clear on the chat row (chat-notes spec §2). `note` is
+    /// required-but-nullable: an omitted field is a deserialisation error,
+    /// never a silent clear — only explicit `null` clears. Serde defaults a
+    /// bare `Option` to `None` on a missing field, so the explicit
+    /// `deserialize_with` (with no `default`) is what makes omission an error.
+    #[serde(rename_all = "camelCase")]
+    SetChatNote {
+        chat_id: String,
+        #[serde(deserialize_with = "required_nullable")]
+        note: Option<ChatNote>,
+    },
     /// Full-config replace on the chat row (zeron `SetChatConfig`): the
     /// composer's mid-session model / reasoning / options changes, LWW-synced
     /// so they survive restarts and reach every device.
@@ -831,6 +853,11 @@ impl EngineRpc {
             MutateParams::SetChatArchived { chat_id, archived } => self
                 .workspace
                 .set_chat_archived(&chat_id, archived)
+                .map_err(failed)
+                .map(drop),
+            MutateParams::SetChatNote { chat_id, note } => self
+                .workspace
+                .set_chat_note(&chat_id, note.as_ref())
                 .map_err(failed)
                 .map(drop),
             MutateParams::SetChatConfig { chat_id, config } => self
