@@ -64,15 +64,17 @@ sharpen them, but a ticket that wants to overturn one should say so out loud.
 - **The resting marker carries over as a stub on the row's leading edge**, ported to points.
   One visual language across the two apps, and it costs no layout. A coloured dot on one of the
   row's lines was rejected: it would collide with the status dot the row already carries.
-- **The reveal is not settled by argument.** Three candidates survive charting and go to a
-  prototype: marker only with a long-press card (V1), the note taking the row's location line
-  (V3), and both together (V6). Four candidates died in the grill and do not return: the note
-  as a fourth line on every noted row (ragged heights damage the `Motion.resort` FLIP glide,
-  and the 36pt shelf row cannot take it), the note taking the harness and branch line instead
-  (the same shape as V3 with a worse sacrifice), a full row tint (it fights the press wash and
-  the selected wash, the row's only two interactive signals), and tap-to-expand on the marker
-  (a 3pt target needs a 44pt hit area, which then fights the row's own tap-to-open; the desktop
-  killed its 12px hit zone for this reason and wrote down why).
+- **The reveal went to a prototype rather than to argument, and is now settled** by
+  [05](./issues/05-the-reveal.md). Four candidates died in the grill and do not return: the note
+  as a fourth line on every noted row, the note taking the harness and branch line instead (the
+  same shape as V3 with a worse sacrifice), a full row tint (it fights the press wash and the
+  selected wash, the row's only two interactive signals), and tap-to-expand on the marker (a 3pt
+  target needs a 44pt hit area, which then fights the row's own tap-to-open; the desktop killed
+  its 12px hit zone for this reason and wrote down why). **One of charting's reasons is wrong and
+  does not carry**: the fourth-line candidate was said to damage the `Motion.resort` FLIP glide,
+  and [05](./issues/05-the-reveal.md) recorded that glide surviving ragged heights frame by
+  frame. That candidate stays dead on the 36pt shelf row and on the list's density, not on
+  motion.
 
 ### Facts established while charting
 
@@ -91,7 +93,9 @@ Looked up, not decided. A ticket does not need to re-check these.
   is off the table, including `.contextMenu(menuItems:preview:)` with its zoom transition.
 - **The archived shelf row is a fixed 36pt single line** (`ArchivedShelf.swift:132`): harness
   mark, title, time-ago. A second line does not fit it. Whatever wins on the session rows must
-  degrade to marker-only there.
+  degrade to marker-only there. **Superseded by [05](./issues/05-the-reveal.md)**: the winner
+  puts nothing on a row's second line at all, so nothing degrades and both rows are told the
+  same thing.
 
 - **The session row measures 61.7pt, not the ~54 that was assumed, and both rows set their title
   in `Theme.sans(13)` for a 17.00pt line box.** Measured live by
@@ -138,9 +142,33 @@ Looked up, not decided. A ticket does not need to re-check these.
   from the desktop would be dropped by an iOS edit. What iOS preserves is `modelOptions`, an
   open map it cannot author. Read the file's warning comment narrowly.
 
+- **A `.contextMenu` preview does not adopt its content's height.** Found by
+  [05](./issues/05-the-reveal.md), and it constrains every ticket that touches the long press.
+  The preview lays its content out correctly and then masks it, so a card taller than about two
+  lines of 13pt text is cut mid-sentence. `.fixedSize(vertical:)` does not help and neither does
+  moving the attachment point; only an explicit `.frame(height:)` does. The height must therefore
+  be known before the press. Ruled out by building each alternative, not by reading.
+
 ## Decisions so far
 
 <!-- one line per resolved ticket -->
+
+- [05 - The reveal: how the phone shows the note](./issues/05-the-reveal.md) - **V1**: the row
+  gains 04's marker and nothing else, and a **long press opens the Note Card**. Chosen by the
+  human on the real list, against three rivals that each put note text on a row: the phone's list
+  is dense already, and every one of them spent the list's calm to save one press. The card is
+  **324pt wide** (300pt of text), **13pt**, clamped at **10 lines** then elided, on `Theme.surface`
+  under the slot at **0.10** with a **0.32** hairline, radius **12**, and it **carries the row's
+  `space @ device` line** - because the preview covers the row while the finger is down, which the
+  desktop's floating card never did. The desktop's 320px width does **not** port: it makes a 344pt
+  card on a 402pt phone, between the 324 accepted here and the 364 refused, and nearer the refused
+  one - though 344 itself was not built, so that is a direction and not a measurement.
+  **One mechanism on both row shapes** - the same gesture opens the same card on the 36pt shelf,
+  so there is no degrade at all. **No row height
+  changes**, so the list motion question dissolves; it was answered anyway on the losing V6, whose
+  ragged heights the `Motion.resort` glide survived frame by frame. The card's height must be
+  measured before the press, which the desktop's spec §5 already does for its own reason.
+  Prototype on branch `proto/05-the-reveal`.
 
 - [04 - The resting marker, on two row shapes](./issues/04-resting-marker-on-two-row-shapes.md) -
   the marker is **3pt wide, as tall as the row's own title line, fully rounded, inset 2pt,
@@ -190,17 +218,11 @@ Looked up, not decided. A ticket does not need to re-check these.
 
 In-scope fog. Each patch graduates into tickets once the frontier reaches it.
 
-- **Accessibility.** VoiceOver for the marker and for the note text, and what Dynamic Type does
-  to whichever row shape wins. This cannot be phrased sharply until the reveal is chosen,
-  because V1, V3, and V6 each present a different thing to read out. **Narrowed by
-  [04](./issues/04-resting-marker-on-two-row-shapes.md)**: the resting marker's own Dynamic Type
-  behaviour is settled - it tracks the title's line box and is clamped to the row - so what stays
-  in the fog is VoiceOver, and what Dynamic Type does to whatever the reveal adds.
-- **List motion.** Whether the chosen reveal forces any change to `Motion.resort` or to how the
-  List diffs rows. V3 changes no heights and V6 changes them per row, so the answer is
-  downstream of the reveal.
-- **Discoverability of authoring.** A user with no notes has nothing on screen that says a note
-  is possible. Whether that needs an affordance, and where, waits on the menu's final shape.
+- **Discoverability.** A user with no notes has nothing on screen that says a note is possible -
+  and [05](./issues/05-the-reveal.md) sharpened the problem rather than easing it: the winner
+  shows no note text at rest, so a user with six notes cannot read one without pressing. Whether
+  that needs an affordance, and where, still waits on the menu's final shape in
+  [06](./issues/06-menu-and-note-editor-sheet.md).
 
 ## Out of scope
 

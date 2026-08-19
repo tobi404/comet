@@ -3,7 +3,7 @@
 Map: [Chat Notes on iOS](../map.md)
 Type: prototype
 Status: open
-Blocked by: 02, 05
+Blocked by: 02 (resolved), 05 (resolved)
 
 ## Question
 
