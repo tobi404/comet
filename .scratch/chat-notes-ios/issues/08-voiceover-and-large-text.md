@@ -3,6 +3,7 @@
 Map: [Chat Notes on iOS](../map.md)
 Type: grilling
 Status: open
+Claimed by: Beka Demuradze
 Blocked by: 05 (resolved), 06 (resolved)
 
 ## Question
