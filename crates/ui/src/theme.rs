@@ -894,10 +894,71 @@ fn band_for(appearance: Appearance) -> Hsla {
 /// [`glass_selected_shadows`] is what distinguishes selection. Selection
 /// *inside floating cards* is different — see [`card_selected_bg`].
 pub fn glass_selected_bg() -> Hsla {
-    match current_appearance() {
-        Appearance::Dark => wash(0.11),
-        Appearance::Light => wash(0.06),
+    glass_selected_bg_for(current_appearance())
+}
+
+/// [`glass_selected_bg`] for a named appearance — the row background the Chat
+/// Note marker's contrast is measured against without touching the
+/// process-wide appearance (see [`tests::dump_note_bar_contrast`]).
+fn glass_selected_bg_for(appearance: Appearance) -> Hsla {
+    match appearance {
+        Appearance::Dark => wash_for(Appearance::Dark, 0.11),
+        Appearance::Light => wash_for(Appearance::Light, 0.06),
     }
+}
+
+/// The **Colour Slots** a Chat Note can carry, in the order the Note Editor
+/// shows them: each is a wire id and the oklch hue it paints at.
+///
+/// One table, not two parallel ones — a slot IS its id plus its hue, and a
+/// sixth slot must be one edit. The ids are short neutral strings (never an
+/// index, never hex) so the palette can be reordered or re-tuned without
+/// repainting stored notes. The hues are spread around the wheel so the five
+/// stay apart at 3px wide: the closest pair (`rose`/`amber`) sits at OKLab
+/// ΔE 0.109 in dark, 0.102 in light. `rose` leads because a new note starts
+/// on it.
+const NOTE_SLOTS: [(&str, f32); 5] = [
+    ("rose", 20.0),
+    ("amber", 78.0),
+    ("green", 152.0),
+    ("sky", 232.0),
+    ("violet", 302.0),
+];
+
+/// One lightness and one chroma per appearance across all five slots, so no
+/// Colour Slot shouts louder than the rest. Light runs slightly darker and
+/// less saturated than dark because it paints on the bright frost.
+const NOTE_SLOT_TONE_DARK: (f32, f32) = (0.660, 0.112);
+const NOTE_SLOT_TONE_LIGHT: (f32, f32) = (0.650, 0.105);
+
+/// The colour a Chat Note's Colour Slot paints in the current appearance.
+///
+/// The oklch triple is what ships; it resolves at paint time, so a light/dark
+/// re-tune follows the theme instead of stranding colours stored on the wire.
+pub fn note_slot_color(slot: &str) -> Hsla {
+    note_slot_color_for(current_appearance(), slot)
+}
+
+/// [`note_slot_color`] for a named appearance — the contrast reproducer
+/// measures both themes in one run.
+///
+/// An unrecognised slot id paints as the first slot, `rose`, rather than as
+/// nothing: iOS writes registry rows directly and the model deliberately does
+/// not validate the id (`zeron_proto::ChatNote::color`), so an id from a
+/// future palette can reach this function. Dropping the bar would recreate the
+/// invisible note the model excludes — a note the user cannot see is a note
+/// they cannot find. The cost is named: a sixth slot added later paints as
+/// rose on an older build, and reads there as a real rose note.
+fn note_slot_color_for(appearance: Appearance, slot: &str) -> Hsla {
+    let hue = NOTE_SLOTS
+        .iter()
+        .find(|(id, _)| *id == slot)
+        .map_or(NOTE_SLOTS[0].1, |(_, hue)| *hue);
+    let (l, c) = match appearance {
+        Appearance::Dark => NOTE_SLOT_TONE_DARK,
+        Appearance::Light => NOTE_SLOT_TONE_LIGHT,
+    };
+    oklch(l, c, hue)
 }
 
 /// The user message bubble's plate: the same translucent wash family as
@@ -1225,6 +1286,148 @@ mod tests {
                     t.appearance
                 );
             }
+        }
+    }
+
+    /// Every background a Chat Note's resting marker can land on, per
+    /// appearance.
+    ///
+    /// The sidebar is vibrancy: the frost is translucent over the blurred
+    /// desktop, so its real tone depends on the wallpaper. The four rows the
+    /// spec tabulates come first; the two wallpaper extremes follow, because
+    /// the extreme is where a muted bar is most at risk of vanishing.
+    /// [`contrast_ratio`] needs opaque inputs, so every translucent layer is
+    /// flattened onto the one under it first.
+    fn note_bar_backgrounds(appearance: Appearance) -> Vec<(&'static str, Hsla)> {
+        let theme = match appearance {
+            Appearance::Dark => Theme::dark(),
+            Appearance::Light => Theme::light(),
+        };
+        let frost = flatten(theme.glass(), theme.surface);
+        vec![
+            ("surface", theme.surface),
+            ("frost", frost),
+            ("frost+hover", flatten(theme.glass_hover(), frost)),
+            (
+                "frost+selected",
+                flatten(glass_selected_bg_for(appearance), frost),
+            ),
+            ("frost/white desktop", flatten(theme.glass(), grey(0xff))),
+            ("frost/black desktop", flatten(theme.glass(), grey(0x00))),
+        ]
+    }
+
+    /// Worst contrast among the five Colour Slots against one background — the
+    /// number that decides whether the palette is legible, since a user picks a
+    /// slot for its colour, not for its ratio.
+    fn worst_note_slot_ratio(appearance: Appearance, bg: Hsla) -> f32 {
+        NOTE_SLOTS
+            .iter()
+            .map(|(slot, _)| contrast_ratio(note_slot_color_for(appearance, slot), bg))
+            .fold(f32::MAX, f32::min)
+    }
+
+    /// Perceptual distance between two Colour Slots, in OKLab.
+    ///
+    /// All five share one lightness and one chroma by construction, so a WCAG
+    /// ratio between them reads ~1.00 and measures nothing. Hue separation is
+    /// the whole question and OKLab ΔE is what answers it.
+    fn delta_e_ok(c: f32, h1: f32, h2: f32) -> f32 {
+        let (a1, b1) = (c * h1.to_radians().cos(), c * h1.to_radians().sin());
+        let (a2, b2) = (c * h2.to_radians().cos(), c * h2.to_radians().sin());
+        ((a1 - a2).powi(2) + (b1 - b2).powi(2)).sqrt()
+    }
+
+    /// The Chat Note marker's reproducer:
+    /// `cargo test -p zeron-ui --lib dump_note_bar_contrast -- --nocapture`.
+    ///
+    /// It prints the whole table AND pins it. Printing alone would let the
+    /// palette drift under a theme change with nothing failing; pinning alone
+    /// would answer "did it change" without ever showing what the numbers are.
+    #[test]
+    fn dump_note_bar_contrast() {
+        for appearance in [Appearance::Dark, Appearance::Light] {
+            println!("\n=== {appearance:?} ===");
+            for (slot, _) in NOTE_SLOTS {
+                let colour = note_slot_color_for(appearance, slot);
+                let rgb = srgb_u8(hsl_to_rgb(colour.h, colour.s, colour.l));
+                let ratios: Vec<String> = note_bar_backgrounds(appearance)
+                    .into_iter()
+                    .map(|(name, bg)| format!("{name} {:.2}", contrast_ratio(colour, bg)))
+                    .collect();
+                println!(
+                    "  {slot:<7} #{:02x}{:02x}{:02x}  |  {}",
+                    rgb[0],
+                    rgb[1],
+                    rgb[2],
+                    ratios.join("  |  ")
+                );
+            }
+            for (name, bg) in note_bar_backgrounds(appearance) {
+                println!(
+                    "  worst of five on {name}: {:.2}",
+                    worst_note_slot_ratio(appearance, bg)
+                );
+            }
+        }
+
+        // Worst of the five per background, per the spec's contrast table.
+        //
+        // Light sits under the 3:1 floor on hovered and selected rows. That is
+        // ACCEPTED, twice over (spec known limits 3 and 4), not a defect
+        // waiting on a fix: the bar is a decorative mark in a near-monochrome
+        // sidebar and nothing in the product depends on reading it. The
+        // measured remedy, if it is ever revisited, is light at L 0.610 —
+        // which measures 3.04 on a selected row.
+        for (appearance, expected) in [
+            (Appearance::Dark, [5.93, 6.08, 4.87, 4.87]),
+            (Appearance::Light, [2.81, 2.93, 2.60, 2.60]),
+        ] {
+            for (i, (name, bg)) in note_bar_backgrounds(appearance)
+                .into_iter()
+                .take(4)
+                .enumerate()
+            {
+                let worst = (worst_note_slot_ratio(appearance, bg) * 100.0).round() / 100.0;
+                assert_eq!(
+                    worst, expected[i],
+                    "{appearance:?} worst-of-five on {name} moved"
+                );
+            }
+        }
+
+        // Separation: the closest pair is rose/amber in both appearances.
+        for (appearance, chroma, expected) in [
+            (Appearance::Dark, NOTE_SLOT_TONE_DARK.1, 0.109),
+            (Appearance::Light, NOTE_SLOT_TONE_LIGHT.1, 0.102),
+        ] {
+            let mut worst = (f32::MAX, "", "");
+            for (i, (slot_a, hue_a)) in NOTE_SLOTS.iter().enumerate() {
+                for (slot_b, hue_b) in NOTE_SLOTS.iter().skip(i + 1) {
+                    let d = delta_e_ok(chroma, *hue_a, *hue_b);
+                    if d < worst.0 {
+                        worst = (d, slot_a, slot_b);
+                    }
+                }
+            }
+            println!(
+                "{appearance:?} closest pair: {} / {}  ΔE_ok {:.4}",
+                worst.1, worst.2, worst.0
+            );
+            assert_eq!((worst.1, worst.2), ("rose", "amber"));
+            assert_eq!((worst.0 * 1000.0).round() / 1000.0, expected);
+        }
+    }
+
+    /// A slot id from outside the five — which iOS can write, since the model
+    /// does not validate it — still paints, in the first slot's colour.
+    #[test]
+    fn an_unknown_note_slot_id_falls_back_to_the_first_slot() {
+        for appearance in [Appearance::Dark, Appearance::Light] {
+            assert_eq!(
+                note_slot_color_for(appearance, "chartreuse"),
+                note_slot_color_for(appearance, "rose")
+            );
         }
     }
 

@@ -2772,6 +2772,46 @@ mod tests {
         assert_eq!(overview, ["old", "new", "dangling"]);
     }
 
+    /// A Chat Note is a mark, not a rank: it must not pin, promote or group a
+    /// Chat in the sidebar (spec §4, and "pinning a Chat because it has a
+    /// note" is explicitly out of scope). The row's colour bar is the only
+    /// thing a note changes on the list.
+    #[test]
+    fn a_note_does_not_change_the_sidebar_order() {
+        let mut state = AppState::new();
+        let plain = vec![
+            chat("a", 1, Some(3)),
+            chat("b", 2, None),
+            chat("c", 3, None),
+        ];
+        state.apply_chats(plain.clone());
+        let now = Utc::now();
+        let before: Vec<String> = state
+            .overview_chats(now)
+            .iter()
+            .map(|(_, c)| c.id.clone())
+            .collect();
+
+        // Notes on the tail rows, in two different Colour Slots — neither the
+        // presence of a note nor which slot it carries may move a row.
+        let mut noted = plain;
+        noted[1].note = Some(zeron_proto::ChatNote {
+            text: "ship the release".into(),
+            color: "violet".into(),
+        });
+        noted[2].note = Some(zeron_proto::ChatNote {
+            text: "waiting on review".into(),
+            color: "rose".into(),
+        });
+        state.apply_chats(noted);
+        let after: Vec<String> = state
+            .overview_chats(now)
+            .iter()
+            .map(|(_, c)| c.id.clone())
+            .collect();
+        assert_eq!(after, before);
+    }
+
     #[test]
     fn apply_chats_drops_vanished_selection() {
         let mut state = AppState::new();
