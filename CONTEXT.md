@@ -19,8 +19,10 @@ _Avoid_: Run, process
 **Chat Note**:
 A short piece of text the user writes about a Chat, with one Colour Slot. It is a label the
 user authors, not something the agent produces. Text and colour are one indivisible value: a
-Chat has a whole note or no note, never half of one.
-_Avoid_: Sticky note, sticky, annotation, comment, memo
+Chat has a whole note or no note, never half of one. A note is **cleared**, never deleted:
+removal takes the whole value away and leaves the Chat untouched. Product copy may still read
+"Delete note", because a user reads that word first.
+_Avoid_: Sticky note, sticky, annotation, comment, memo; deleting a note (in code or model)
 
 **Colour Slot**:
 One position in the fixed set of colours a Chat Note can carry. A slot keeps its identity when
