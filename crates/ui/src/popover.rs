@@ -905,13 +905,18 @@ pub fn dialog_body(theme: &Theme, copy: impl Into<SharedString>) -> gpui::Div {
         .child(copy.into())
 }
 
+/// [`dialog_field`]'s `py-2`, per edge. A caller that floors the field at a
+/// line count (the Note Editor's three) has to add this to the text's own
+/// height, so the number lives here rather than in a copy that drifts.
+pub const DIALOG_FIELD_PAD_Y: f32 = 8.0;
+
 /// Dialog text-field frame: `rounded-lg border border-white/[0.08]
 /// bg-white/[0.04] px-3 py-2 text-[14px]`.
 pub fn dialog_field(input: AnyElement) -> gpui::Div {
     div()
         .w_full()
         .px(px(12.0))
-        .py(px(8.0))
+        .py(px(DIALOG_FIELD_PAD_Y))
         .rounded(px(8.0))
         .border_1()
         .border_color(hairline(0.08))

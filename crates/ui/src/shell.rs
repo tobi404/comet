@@ -53,6 +53,7 @@ use crate::theme::Theme;
 use crate::transcript::{self, Transcript, TranscriptEvent};
 
 mod note_bar;
+mod note_editor;
 mod spaces;
 mod tabs;
 
@@ -844,6 +845,9 @@ pub struct Shell {
     /// Session-row context menu: (chat id, window position).
     chat_menu: popover::Popup<(String, Point<Pixels>)>,
     rename_dialog: Option<RenameChatDialog>,
+    /// The open Note Editor — the "Session note" dialog, reached only from the
+    /// chat row's context menu.
+    note_editor: Option<note_editor::NoteEditor>,
     /// Chat id awaiting delete confirmation.
     delete_confirm: Option<String>,
     /// Space-row context menu (dropdown rows): (space id, window position).
@@ -1041,9 +1045,10 @@ impl Shell {
             }
             _ => Route::Chat,
         };
-        // More capture knobs of the same kind: `ZERON_OPEN_DIALOG=rename|delete`
-        // opens that dialog for the first chat once chats land; `=model` pops
-        // the combined harness/model menu once the shell is Ready;
+        // More capture knobs of the same kind:
+        // `ZERON_OPEN_DIALOG=rename|note|delete` opens that dialog for the
+        // first chat once chats land; `=model` pops the combined
+        // harness/model menu once the shell is Ready;
         // `ZERON_FORCE_GATE=signin|org|failed` renders that gate regardless of
         // real auth state (display-only — for styling passes).
         let debug_dialog = std::env::var("ZERON_OPEN_DIALOG").ok();
@@ -1098,6 +1103,7 @@ impl Shell {
             notifications_sub: None,
             chat_menu: popover::Popup::default(),
             rename_dialog: None,
+            note_editor: None,
             delete_confirm: None,
             space_menu: popover::Popup::default(),
             rename_space_dialog: None,
@@ -1202,6 +1208,7 @@ impl Shell {
             self.debug_dialog = None;
             match which.as_str() {
                 "rename" => self.open_rename_chat(first, cx),
+                "note" => self.open_note_editor(first, cx),
                 "delete" => {
                     self.delete_confirm = Some(first);
                 }
@@ -4613,8 +4620,19 @@ impl Shell {
         if let Some((chat_id, position)) = self.chat_menu.get().cloned() {
             let chat_menu_closing = self.chat_menu.closing_since();
             let rename_id = chat_id.clone();
+            let note_id = chat_id.clone();
             let archive_id = chat_id.clone();
             let delete_id = chat_id.clone();
+            // One contextual entry, not two: the note is pointer-only, so the
+            // label is the shell's only way to say a note is there. The lookup
+            // serves the active rows and the archived shelf alike — both open
+            // this one menu, and both read `state.chats`.
+            let has_note = self
+                .state
+                .read(cx)
+                .chats
+                .iter()
+                .any(|c| c.id == chat_id && c.note.is_some());
             let menu = popover::popover_card(&theme)
                 .w(px(170.0))
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -4630,6 +4648,21 @@ impl Shell {
                         }))
                         .child(icon(icons::PEN).size(px(16.0)).text_color(theme.text_muted))
                         .child(SharedString::from("Rename…")),
+                )
+                .child(
+                    popover::menu_row(&theme, false, format!("chat-menu-note-{chat_id}"))
+                        .id("chat-menu-note")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_note_editor(note_id.clone(), cx)
+                        }))
+                        // A pen over a page, not a tag: the glossary rules
+                        // "tag" out as a mental model for a Colour Slot.
+                        .child(
+                            icon(icons::PEN_NEW_SQUARE)
+                                .size(px(16.0))
+                                .text_color(theme.text_muted),
+                        )
+                        .child(SharedString::from(note_editor::menu_label(has_note))),
                 )
                 .child(
                     popover::menu_row(&theme, false, format!("chat-menu-archive-{chat_id}"))
@@ -4713,6 +4746,10 @@ impl Shell {
                 )
                 .into_any_element();
             overlays.push(popover::modal("rename-chat-dialog", viewport, card));
+        }
+
+        if let Some(overlay) = self.render_note_editor(viewport, window, cx) {
+            overlays.push(overlay);
         }
 
         overlays.extend(self.render_space_overlays(viewport, window, cx));

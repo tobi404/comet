@@ -125,6 +125,24 @@ pub fn caret_visible(ms_since_activity: u64) -> bool {
     (ms_since_activity / CARET_BLINK_MS) % 2 == 0
 }
 
+/// How much of an incoming edit a character cap will accept.
+///
+/// `range` is the byte range `new_text` replaces, so the room is measured
+/// against what the content will be AFTER the deletion, not before it — a
+/// full field still accepts a paste over a selection.
+///
+/// Characters, not bytes: the cap is a number the user counts, and "280" has to
+/// mean the same for an emoji as for an `a`. The cut lands on a char boundary
+/// by construction, so a clamped paste can never split one.
+fn clamp_to_cap<'a>(content: &str, range: Range<usize>, new_text: &'a str, max: usize) -> &'a str {
+    let replaced = content[range].chars().count();
+    let room = max.saturating_sub(content.chars().count() - replaced);
+    match new_text.char_indices().nth(room) {
+        Some((cut, _)) => &new_text[..cut],
+        None => new_text,
+    }
+}
+
 /// Auto-grow: content height for a wrapped-line count.
 pub fn input_content_height(wrapped_lines: usize) -> f32 {
     wrapped_lines.max(1) as f32 * INPUT_LINE_HEIGHT
@@ -1289,6 +1307,20 @@ pub struct ComposerInput {
     /// File mentions are a composer feature, not a behavior of generic inputs
     /// (picker searches and rename fields also use this type).
     mentions_enabled: bool,
+    /// Hard character ceiling, enforced where text enters rather than by
+    /// rewriting the content afterwards. Every input path — typing, IME
+    /// commit, newline, paste — funnels through `replace_text_in_range`, so
+    /// one clamp there covers all of them, and the caret never has to be put
+    /// back. `set_text` is deliberately NOT clamped: a longer note can reach
+    /// this input from a writer no cap bounds (`docs/adr/0001-chat-notes-sync-
+    /// in-the-registry-doc.md` — iOS writes registry rows directly), and it
+    /// must open intact.
+    max_chars: Option<usize>,
+    /// The height at which the input stops growing and starts scrolling. The
+    /// composer's own 260px textarea box is the default; the Note Editor wants
+    /// a lower ceiling, because Shift+Enter can make twenty short lines inside
+    /// the 280-character cap.
+    max_content_height: Option<f32>,
     /// Bumped once per `layout_text` pass — the flip logic uses it to apply at
     /// most one compact↔expanded flip per layout (a flip is only re-evaluated
     /// after the input has been measured in the new mode).
@@ -1358,6 +1390,8 @@ impl ComposerInput {
             projection: TextProjection::default(),
             ghost: None,
             mentions_enabled: false,
+            max_chars: None,
+            max_content_height: None,
             layout_epoch: 0,
             display_is_placeholder: true,
             blink_anchor: Instant::now(),
@@ -1408,6 +1442,23 @@ impl ComposerInput {
 
     pub fn text(&self) -> &str {
         &self.content
+    }
+
+    /// Cap what the user can type into this input. Characters, not bytes: the
+    /// cap is an authoring affordance the user counts, and "280" has to mean
+    /// the same thing for an emoji as for an `a`.
+    pub fn set_max_chars(&mut self, max: usize) {
+        self.max_chars = Some(max);
+    }
+
+    /// The content's length in characters — what a cap counter reads.
+    pub fn char_count(&self) -> usize {
+        self.content.chars().count()
+    }
+
+    /// Lower the height at which the input stops growing and starts scrolling.
+    pub fn set_max_content_height(&mut self, height: f32) {
+        self.max_content_height = Some(height);
     }
 
     pub fn set_mention_controls(
@@ -2637,6 +2688,26 @@ impl EntityInputHandler for ComposerInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
         let range = self.projection.normalize_range(range);
+        // Clamp before the edit is recorded, so undo never holds text the cap
+        // refused. An input with no cap takes this function exactly as it did
+        // before caps existed — the early return below is inside the capped
+        // arm, so no shipped input's no-op edits change behaviour.
+        //
+        // Only this path is clamped, not `replace_and_mark_text_in_range`: IME
+        // marked text is uncommitted, and it lands here when it commits.
+        let new_text = match self.max_chars {
+            Some(max) => {
+                let clamped = clamp_to_cap(&self.content, range.clone(), new_text, max);
+                // A pure overflow — nothing selected and no room left — is
+                // dropped entirely rather than recorded as an empty edit, which
+                // is what keeps the refused keystroke from registering at all.
+                if clamped.is_empty() && !new_text.is_empty() && range.is_empty() {
+                    return;
+                }
+                clamped
+            }
+            None => new_text,
+        };
         self.invalidate_mention_tooltip();
         // An IME commit is the tail of a composition whose pre-composition
         // snapshot was already taken (`replace_and_mark_text_in_range`);
@@ -3149,8 +3220,11 @@ impl Render for ComposerInput {
             .child(ComposerTextElement {
                 input: cx.entity(),
                 // Internal scrolling once content exceeds the 260px textarea
-                // box minus its `pt-4 pb-1` padding.
-                max_content_height: TEXTAREA_MAX - TEXTAREA_PAD_V,
+                // box minus its `pt-4 pb-1` padding, or a caller's own lower
+                // ceiling (the Note Editor's six-line field).
+                max_content_height: self
+                    .max_content_height
+                    .unwrap_or(TEXTAREA_MAX - TEXTAREA_PAD_V),
             })
     }
 }
@@ -5809,6 +5883,26 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The character cap is judged by eye everywhere except here: whether a
+    /// paste is cut on a character boundary, and whether a full field still
+    /// takes a replacement, are not things you can see.
+    #[test]
+    fn the_character_cap_clamps_by_character_and_measures_room_after_the_deletion() {
+        // Room to spare: nothing is touched.
+        assert_eq!(clamp_to_cap("abc", 3..3, "de", 10), "de");
+        // Typing at the ceiling: the keystroke is refused outright.
+        assert_eq!(clamp_to_cap("abcde", 5..5, "f", 5), "");
+        // A paste that overruns is cut to the room left, not dropped.
+        assert_eq!(clamp_to_cap("abc", 3..3, "defgh", 5), "de");
+        // Room counts what the edit REMOVES: a full field still takes a
+        // replacement over a selection.
+        assert_eq!(clamp_to_cap("abcde", 0..5, "xyz", 5), "xyz");
+        // Characters, not bytes. Each emoji is 4 bytes and one character, and
+        // the cut never splits one.
+        assert_eq!(clamp_to_cap("", 0..0, "😀😀😀", 2), "😀😀");
+        assert_eq!(clamp_to_cap("é", 0..2, "ααα", 2), "αα");
+    }
 
     fn tooltip_target(range: Range<usize>, path: &str) -> MentionTooltipTarget {
         MentionTooltipTarget {

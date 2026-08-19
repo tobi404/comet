@@ -925,6 +925,19 @@ const NOTE_SLOTS: [(&str, f32); 5] = [
     ("violet", 302.0),
 ];
 
+/// The Colour Slot a new Chat Note starts on. Fixed rather than derived from
+/// the Chat: two notes made the same way should not come out different
+/// colours.
+pub const DEFAULT_NOTE_SLOT: &str = NOTE_SLOTS[0].0;
+
+/// The Colour Slot ids in the order the Note Editor's slot row shows them.
+///
+/// The table itself stays private: a slot's hue is this module's business, and
+/// a caller that could see it would be tempted to store one.
+pub fn note_slot_ids() -> [&'static str; NOTE_SLOTS.len()] {
+    NOTE_SLOTS.map(|(id, _)| id)
+}
+
 /// One lightness and one chroma per appearance across all five slots, so no
 /// Colour Slot shouts louder than the rest. Light runs slightly darker and
 /// less saturated than dark because it paints on the bright frost.
