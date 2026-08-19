@@ -2,8 +2,9 @@
 
 Map: [Chat Notes on iOS](../map.md)
 Type: prototype
-Status: open
-Blocked by: 03
+Status: claimed
+Claimed by: Beka Demuradze
+Blocked by: 03 (resolved)
 
 ## Question
 
