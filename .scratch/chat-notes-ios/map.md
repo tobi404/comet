@@ -92,6 +92,22 @@ Looked up, not decided. A ticket does not need to re-check these.
 - **The archived shelf row is a fixed 36pt single line** (`ArchivedShelf.swift:132`): harness
   mark, title, time-ago. A second line does not fit it. Whatever wins on the session rows must
   degrade to marker-only there.
+
+- **The session row measures 61.7pt, not the ~54 that was assumed, and both rows set their title
+  in `Theme.sans(13)` for a 17.00pt line box.** Measured live by
+  [04](./issues/04-resting-marker-on-two-row-shapes.md). The session row is therefore effectively
+  the desktop's own 61px row, so desktop numbers port to it directly; the 36pt shelf is the only
+  row shape that ever needed a real port.
+
+- **`Theme.sans` scales with Dynamic Type.** `Font.custom(_:size:)` (`Theme/Theme.swift:86`) is
+  the scaling variant, not `fixedSize:`. Found by
+  [04](./issues/04-resting-marker-on-two-row-shapes.md). Any absolute point size this effort
+  writes down has to say what it does when the text grows.
+
+- **The shelf row clips its own content at the accessibility text sizes.** Pre-existing, found by
+  [04](./issues/04-resting-marker-on-two-row-shapes.md): `ArchivedShelf.swift:153` pins the row at
+  36pt while its title scales. Not caused by this effort and not fixed by it - this map plans.
+  Named so a later reader does not mistake it for something a Chat Note introduced.
 - **The app has a demo mode, and it is a fork, not a mirror.** `AppModel.setArchived`
   (`App/AppModel.swift:474`) reads `if let demo { ...; return }`: a mutation reaches
   `DemoDataset` **or** `WorkspaceStore`, never both. Corrected by
@@ -125,6 +141,18 @@ Looked up, not decided. A ticket does not need to re-check these.
 ## Decisions so far
 
 <!-- one line per resolved ticket -->
+
+- [04 - The resting marker, on two row shapes](./issues/04-resting-marker-on-two-row-shapes.md) -
+  the marker is **3pt wide, as tall as the row's own title line, fully rounded, inset 2pt,
+  centred**, clamped to the row less 3pt at each end. One rule on both shapes; at the default
+  text size that is **3 x 17pt** on each. The height is a rule and not a number because
+  `Theme.sans` scales with Dynamic Type: a fixed 18pt was indistinguishable at the default size
+  and came apart at the accessibility sizes, which is the whole finding. **On the shelf it paints
+  at full strength**, settling the one sub-3:1 number 03 left open - 3pt of ink cannot shout on a
+  quiet row. The empty state is proved, not argued: markers on against markers off differ by
+  exactly one 3.00pt column, 14.00pt from the screen edge, and no title moves. The clamp is 3pt
+  because the wash's corner arc reaches 2.71pt at inset 2. A full-height rail was built and
+  refused, so charting's "stub" stands. Prototype on branch `proto/04-resting-marker`.
 
 - [03 - The Colour Slots on the phone](./issues/03-colour-slots-on-the-phone.md) - the five
   become a `NoteSlot` enum at the paint layer in a new `Theme/NoteSlots.swift`, at **L 0.660,
@@ -164,7 +192,10 @@ In-scope fog. Each patch graduates into tickets once the frontier reaches it.
 
 - **Accessibility.** VoiceOver for the marker and for the note text, and what Dynamic Type does
   to whichever row shape wins. This cannot be phrased sharply until the reveal is chosen,
-  because V1, V3, and V6 each present a different thing to read out.
+  because V1, V3, and V6 each present a different thing to read out. **Narrowed by
+  [04](./issues/04-resting-marker-on-two-row-shapes.md)**: the resting marker's own Dynamic Type
+  behaviour is settled - it tracks the title's line box and is clamped to the row - so what stays
+  in the fog is VoiceOver, and what Dynamic Type does to whatever the reveal adds.
 - **List motion.** Whether the chosen reveal forces any change to `Motion.resort` or to how the
   List diffs rows. V3 changes no heights and V6 changes them per row, so the answer is
   downstream of the reveal.
