@@ -11,6 +11,11 @@ Editor** sheet.
 
 The spec is reached when every ticket below is resolved. The map is not the build.
 
+**Reached.** All nine tickets are resolved, the frontier is empty and the fog is clear. The
+destination document is [spec.md](./spec.md), written by
+[07](./issues/07-write-the-spec.md). The next session is an implementation session and it starts
+from the spec, not from here.
+
 ## Notes
 
 **This is the fresh effort the desktop map deferred.** The completed map at
@@ -169,9 +174,20 @@ Looked up, not decided. A ticket does not need to re-check these.
   dim is linear.** Found by [09](./issues/09-the-note-cards-corner.md), by solving it from 27
   sample pairs: `pressed = 0.7917 x rest + (4.7, 4.7, 8.7)`, a dark blue-grey at about 21%. So a
   colour authored inside a preview renders exactly as authored while the same colour outside it
-  does not, and `Theme.bg` `#0D0D0D` reads `#0F0F13` beside a preview. Recorded here and not only
+  does not, and the page reads `#0F0F13` beside a preview. Recorded here and not only
   in the ticket, because it is the same trap class as `Theme.sansUI`: two things that look like the
   same colour, measured with the wrong one, and nothing warns.
+
+- **The Sessions list and the archived shelf paint on `Theme.surface` `#0d0d0d`, not on `Theme.bg`
+  `#060606`.** Found by [07](./issues/07-write-the-spec.md) while writing the spec.
+  `Views/HomeView.swift:41` and `Views/SpaceView.swift:48` set that background; `Theme.bg`
+  (`Theme/Theme.swift:14`) is the app root **behind** the list. Two resolved tickets label it wrong:
+  [03](./issues/03-colour-slots-on-the-phone.md) calls `#060606` the "resting list row" and
+  composites both of its wash rows over it - re-derived over the real page, pressed **≈ 5.20** and
+  selected **≈ 4.64** against its 5.53 and 4.99, and every verdict holds - and
+  [09](./issues/09-the-note-cards-corner.md) names the veil's source `Theme.bg` while its arithmetic
+  and its measured `(15, 15, 19)` both belong to `#0d0d0d`. The tickets are left as their sessions
+  wrote them; [spec.md](./spec.md) carries the corrected version and the warning.
 
 - **The `.contextMenu` preview platter draws a surface of its own, and owns its corner.** Found by
   [09](./issues/09-the-note-cards-corner.md). The tray is invisible whenever the preview's content
@@ -189,6 +205,26 @@ Looked up, not decided. A ticket does not need to re-check these.
 ## Decisions so far
 
 <!-- one line per resolved ticket -->
+
+- [07 - Write the spec](./issues/07-write-the-spec.md) - **the spec is written at
+  [spec.md](./spec.md)** and the map is complete. Eleven sections in the desktop spec's shape,
+  self-contained: an implementation session needs the spec, [CONTEXT.md](../../CONTEXT.md) and the
+  ADR, and nothing from here. **No desktop amendment is needed** - the desktop spec is silent or
+  non-porting in six places and wrong in none, so the report is a table of differences rather than a
+  fix. **No new glossary term**: `Note Card` was **stretched**, because the phone exposed two faults
+  in its definition - "floating" was a desktop detail (the preview *replaces* the row), and
+  `preview` sat on its `_Avoid_` list while iOS builds the card from a preview API. The prediction
+  inside the old definition came true exactly, which is the argument against minting a rival.
+  **Two errors in resolved work were found while writing**, both the same mistake: the list paints on
+  **`Theme.surface` `#0d0d0d`**, not `Theme.bg` `#060606` (`HomeView.swift:41`, `SpaceView.swift:48`).
+  03's two wash rows composited over the wrong background - re-derived, pressed **≈ 5.20** and
+  selected **≈ 4.64** against its 5.53 and 4.99, **no verdict moves** - and 09 misnamed the veil's
+  source constant, which **would have cost an implementer the whole decision**, because veiling with
+  `Theme.bg` gives `#09090E` and the visible pop 09 proved the veil does not have. Fifteen known
+  limits, thirty-seven tests with the seven non-obvious ones marked as guards, the clamp rule stated
+  once and applied three times, and the values this map refused to pin still unpinned. **One drift
+  named and not resolved**: the 3pt mark is "bar" and "stub" on the desktop and **resting marker**
+  here, and minting a term would reach into desktop vocabulary this map ruled out.
 
 - [09 - The Note Card's corner, on the system's preview platter](./issues/09-the-note-cards-corner.md) -
   the card is **inset 14pt inside the preview and the margin is filled with `#0F0F13`**, the page's

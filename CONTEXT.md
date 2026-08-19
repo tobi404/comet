@@ -31,9 +31,11 @@ slots are decorative and carry no system meaning.
 _Avoid_: Swatch, tag, label colour, category
 
 **Note Card**:
-The floating surface that shows a Chat Note in full. It is named for what it shows, not for
-what opens it, because the pointer may not stay the only trigger.
-_Avoid_: Hover card, tooltip, popover, preview
+The surface that shows a Chat Note in full. It is named for what it shows, not for what
+opens it: the desktop floats it beside the row under a resting pointer, and iOS lifts it
+into the row's own place under a long press.
+_Avoid_: Hover card, tooltip, popover, preview (iOS builds one from a context-menu preview
+API, but the surface is still the Note Card)
 
 **Note Editor**:
 The dialog where the user writes a Chat Note and picks its Colour Slot. It is the only place a
