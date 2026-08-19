@@ -95,7 +95,7 @@ reaches full width (**down**), and **ovalness** - `down / (height / 2)`, where *
 | `chat-beta`, one word | 119 x 57pt | 24.3 across, 22.3 down | **0.79** |
 | `chat-veil`, short | 195 x 58pt | 32.7 across, 23.0 down | **0.79** |
 | `chat-picker`, three lines | 324 x 91pt | 36.7 across, 28.7 down | **0.63** |
-| `chat-oklch`, on the 36pt shelf | 253 x 51pt | 26.7 across | a full stadium |
+| `chat-oklch`, on the 36pt shelf | 255 x 37pt | 21.0 across, 19.7 down | **1.06** - a pill |
 
 **The card's 12pt does nothing at all.** The tint, the hairline and the clip are all drawn and
 then masked over, which is why the hairline is visible running straight into the arc and stopping.
@@ -267,6 +267,13 @@ proto09-strip.py <out> <x0 y0 x1 y1> <names...>
 the card's own text is white, so a tint test splits every row that carries a word, and the menu
 panel passes a luminance test but is the only surface that is not tinted. Both tests are there
 because the obvious single test fails.
+
+**Two limits of that script, named so a later reader does not trust it blindly.** On the shelf
+frame its chroma sample lands on the note's own text and it reports "no card found"; that row of
+the table above was measured by taking the band by hand. And on a **veil** frame its band is the
+veil's box rather than the card's wherever the menu overlaps the card's lower edge, so a corner
+read off one of those is the veil's corner. Every veil number quoted in this answer is from a
+frame where the card's own box was the band.
 
 ### Assets
 
