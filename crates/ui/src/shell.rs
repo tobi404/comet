@@ -58,6 +58,8 @@ mod note_editor;
 mod spaces;
 mod tabs;
 
+use note_card::NoteCardRow as _;
+
 use spaces::{AddSpaceFlow, RenameSpaceDialog};
 
 actions!(
@@ -874,7 +876,7 @@ pub struct Shell {
     note_card_leave: Option<Task<()>>,
     /// The hovered row's bounds, captured per frame by a `canvas` child of that
     /// one row.
-    note_card_anchor: note_card::AnchorCell,
+    note_card_anchor: note_card::RowAnchor,
     /// The click-dismiss latch: the Chat whose row swallowed a mouse-down and
     /// stays cardless until the pointer leaves it. Not one of the spec's four
     /// fields, but §5's latch has nowhere else to live.
@@ -3623,19 +3625,9 @@ impl Shell {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_chat(select_id.clone(), cx);
             }))
-            // A left press selects the Chat and the pointer stays on the row —
-            // the latch is what keeps the card from returning 350ms later on
-            // top of the Chat the click just opened.
-            .on_mouse_down(MouseButton::Left, {
-                let press_id = id.clone();
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    this.note_card_press(&press_id, cx);
-                })
-            })
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                    this.note_card_press(&menu_id, cx);
                     this.chat_menu.open((menu_id.clone(), event.position));
                     cx.notify();
                 }),
@@ -3731,9 +3723,9 @@ impl Shell {
             // The resting marker, last so it paints OVER the row's hover and
             // selected washes (both are this element's own background).
             .children(note_bar::note_bar(note))
-            // Mounted only while this row is the Note Card's target: it writes
-            // the row's window bounds for the card to centre on.
-            .children(self.note_card_anchor_probe(&id))
+            // The Note Card's own wiring, the same one line the archived shelf
+            // carries. Only the hover branch above differs between the two.
+            .note_card_wiring(self, &id, cx)
             .into_any_element()
     }
 

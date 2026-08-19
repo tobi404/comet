@@ -56,10 +56,23 @@ pub(super) const MARGIN: f32 = 8.0;
 /// five-word note is a five-word card.
 pub(super) const MAX_WIDTH: f32 = 320.0;
 
-/// Text metrics. 13px on 19px, in a 10px/8px padded card.
+/// The sidebar row title's own size, so a note reads as that row talking
+/// rather than as a second voice beside it.
 pub(super) const TEXT_SIZE: f32 = 13.0;
+
+/// 1.46 of [`TEXT_SIZE`], against the row title's 1.31. Prose here runs to ten
+/// lines where a row title runs to one, and at that length the tighter leading
+/// closes the card into a slab.
 pub(super) const LINE_HEIGHT: f32 = 19.0;
+
+/// Horizontal padding. Wider than the vertical because the eye needs more air
+/// at the start of a line than above it, and it is the value that keeps a
+/// one-word note from reading as a chip.
 pub(super) const PAD_X: f32 = 10.0;
+
+/// Vertical padding. Below [`PAD_X`] on purpose: at [`LINE_HEIGHT`] the line
+/// box already carries 6px of its own leading, so equal padding looked
+/// top-heavy.
 pub(super) const PAD_Y: f32 = 8.0;
 
 /// The overflow clamp. Ten lines, then elide — the card never scrolls, and
@@ -69,11 +82,11 @@ pub(super) const PAD_Y: f32 = 8.0;
 /// elides; [`FLOOR_WIDTH`] is.
 pub(super) const LINE_CLAMP: usize = 10;
 
-/// The Note Editor's authoring cap, repeated here as the size the floor is
-/// sized to hold. The editor owns the cap itself; this is only what the floor
-/// is checked against.
+/// The Note Editor's authoring cap — the note length [`FLOOR_WIDTH`] is sized
+/// to hold. Borrowed from the editor rather than copied, so the floor cannot
+/// go stale the day the cap moves.
 #[cfg(test)]
-const AUTHORING_CAP: usize = 280;
+use super::note_editor::MAX_CHARS as AUTHORING_CAP;
 
 /// Mean advance of one character of the sidebar's text at [`TEXT_SIZE`].
 ///
@@ -100,6 +113,16 @@ const WRAP_EFFICIENCY: f32 = 0.93;
 /// clamp, and that is what this is: the crossing width under the model above,
 /// rounded up to a whole ten. The 10-line clamp stays where it is, because it
 /// is what keeps a longer-than-cap note bounded.
+///
+/// **What is and is not established.** [`AVG_ADVANCE`] comes from a real
+/// measurement, [`WRAP_EFFICIENCY`] is an assumption, and the test below
+/// compares the floor against a crossing width computed from those same two
+/// constants — so it guards the pair against drift, and proves nothing about
+/// the live text system. The measurement that would close that gap is the
+/// "Capped Note Fixture" in `.scratch/chat-notes-impl/note-card-demo.sh`: a
+/// full 280 characters read at the floor width. If it elides there, the honest
+/// fix is more floor, never more clamp — and known limit 2 already accepts the
+/// elide, so this is a floor to raise on evidence rather than pad on suspicion.
 pub(super) const FLOOR_WIDTH: f32 = 220.0;
 
 /// The 350ms open delay — the repo's existing hover-reveal number
@@ -290,13 +313,41 @@ pub(super) struct NoteCardWait {
     pub _task: Task<()>,
 }
 
-/// The hovered row's bounds, written by a `canvas` child of the row and read by
-/// the open timer and the render site.
+/// The hovered row's bounds, written by a `canvas` child of that one row and
+/// read by the open timer and the render site.
 ///
 /// A shared cell rather than a plain field because a `canvas` prepaint closure
 /// gets `&mut Window, &mut App` and cannot reach `&mut Shell` — the same reason
 /// `Shell::bottom_stack` is one.
-pub(super) type AnchorCell = Rc<RefCell<Option<(String, Bounds<Pixels>)>>>;
+#[derive(Default, Clone)]
+pub(super) struct RowAnchor(Rc<RefCell<Option<Reported>>>);
+
+/// (Chat, the bounds that Chat's row last reported).
+type Reported = (String, Bounds<Pixels>);
+
+impl RowAnchor {
+    /// The bounds this Chat's row last reported, or `None` when the row that
+    /// last wrote was a different one — which is what a vanished row looks
+    /// like from here.
+    pub(super) fn bounds_for(&self, chat: &str) -> Option<Bounds<Pixels>> {
+        match &*self.0.borrow() {
+            Some((id, bounds)) if id == chat => Some(*bounds),
+            _ => None,
+        }
+    }
+
+    /// The sink a row's measuring `canvas` writes through.
+    fn writer(&self, chat: &str) -> impl Fn(Bounds<Pixels>) + 'static {
+        let cell = self.0.clone();
+        let id = chat.to_string();
+        move |bounds| {
+            let mut slot = cell.borrow_mut();
+            if slot.as_ref() != Some(&(id.clone(), bounds)) {
+                *slot = Some((id.clone(), bounds));
+            }
+        }
+    }
+}
 
 /// Card heights, measured one frame late.
 ///
@@ -357,6 +408,42 @@ impl HeightCache {
 fn key_width(width: f32) -> u32 {
     width.round().max(0.0) as u32
 }
+
+// ---------------------------------------------------------------------------
+// Row wiring
+// ---------------------------------------------------------------------------
+
+/// Everything a Chat row owes the Note Card apart from the hover branch: the
+/// mouse-down that dismisses the card and latches the row, and the `canvas`
+/// that reports the row's bounds.
+///
+/// One helper for both row builders, on the same reasoning `note_bar` gives for
+/// its stub — a second copy drifts. Here the drift bites harder than a misplaced
+/// pixel: drop the mouse-down and the card outlives the click that opened a
+/// Chat; drop the probe and the card never opens at all.
+///
+/// An extension trait rather than a wrapping call so it costs each builder ONE
+/// chained line. Wrapping the row would re-indent both builders whole, and this
+/// is a fork: a reflowed `render_chat_row` conflicts with every upstream edit to
+/// it.
+///
+/// The hover branch is deliberately NOT here. Spec §5 puts it inside each row's
+/// existing hover listener, and that is a different listener in each builder.
+pub(super) trait NoteCardRow: InteractiveElement + ParentElement + Sized {
+    fn note_card_wiring(self, shell: &Shell, chat: &str, cx: &mut Context<Shell>) -> Self {
+        // "Any mouse-down", literally: a left press selects the Chat, a right
+        // press opens the context menu, and two floating layers off one row at
+        // once is a bug. This ADDS to the row's own handlers rather than
+        // replacing them — gpui appends mouse-down listeners.
+        let pressed = chat.to_string();
+        self.on_any_mouse_down(cx.listener(move |shell, _: &MouseDownEvent, _, cx| {
+            shell.note_card_press(&pressed, cx);
+        }))
+        .children(shell.note_card_anchor_probe(chat))
+    }
+}
+
+impl<E: InteractiveElement + ParentElement + Sized> NoteCardRow for E {}
 
 // ---------------------------------------------------------------------------
 // The trigger, wired to the Shell
@@ -467,7 +554,9 @@ impl Shell {
             return;
         }
         self.note_card_wait = None;
-        if self.note_card_stood_down() || self.note_card_latch.is_some() {
+        // The latch is per-row: one row holding it must not keep its
+        // neighbours cardless.
+        if self.note_card_stood_down() || self.note_card_latch.as_deref() == Some(chat) {
             return;
         }
         if !self
@@ -481,13 +570,7 @@ impl Shell {
         }
         // The row writes its own bounds through a `canvas`; only the row this
         // wait is for mounts one, so a missing anchor means the row is gone.
-        let Some(anchor) = self
-            .note_card_anchor
-            .borrow()
-            .as_ref()
-            .filter(|(id, _)| id == chat)
-            .map(|(_, bounds)| *bounds)
-        else {
+        let Some(anchor) = self.note_card_anchor.bounds_for(chat) else {
             return;
         };
         // A close still queued from the row this card is replacing would fire
@@ -538,8 +621,8 @@ impl Shell {
 
     /// The row's bounds writer: a `canvas` that measures and paints nothing.
     /// Mounted only on the row the card is waiting for or open on, so exactly
-    /// one row writes the cell.
-    pub(super) fn note_card_anchor_probe(&self, chat: &str) -> Option<AnyElement> {
+    /// one row ever writes the cell.
+    fn note_card_anchor_probe(&self, chat: &str) -> Option<AnyElement> {
         let tracked = self
             .note_card_wait
             .as_ref()
@@ -548,23 +631,14 @@ impl Shell {
         if !tracked {
             return None;
         }
-        let cell = self.note_card_anchor.clone();
-        let id = chat.to_string();
+        let write = self.note_card_anchor.writer(chat);
         Some(
-            gpui::canvas(
-                move |bounds, _, _| {
-                    let mut slot = cell.borrow_mut();
-                    if slot.as_ref() != Some(&(id.clone(), bounds)) {
-                        *slot = Some((id.clone(), bounds));
-                    }
-                },
-                |_, _: (), _, _| {},
-            )
-            // No id and no listener: the probe must never take the pointer off
-            // the row it is measuring.
-            .absolute()
-            .inset_0()
-            .into_any_element(),
+            gpui::canvas(move |bounds, _, _| write(bounds), |_, _: (), _, _| {})
+                // No id and no listener: the probe must never take the pointer
+                // off the row it is measuring.
+                .absolute()
+                .inset_0()
+                .into_any_element(),
         )
     }
 
@@ -599,12 +673,7 @@ impl Shell {
         // The live anchor while the pointer is still on the row; the bounds the
         // card opened at once it is not (the probe unmounts with the hover, and
         // a card mid-exit must not jump).
-        let anchor = self
-            .note_card_anchor
-            .borrow()
-            .as_ref()
-            .filter(|(id, _)| *id == chat)
-            .map_or(opened_at, |(_, bounds)| *bounds);
+        let anchor = self.note_card_anchor.bounds_for(&chat).unwrap_or(opened_at);
 
         // A `WatchChats` frame can clear the note while its card is up.
         let Some(note) = self
@@ -756,10 +825,15 @@ mod tests {
 
     /// Known limit 2 says a note inside the authoring cap can elide near the
     /// floor, and the remedy the spec named is a HIGHER FLOOR, never a taller
-    /// clamp. This is that floor: a full 280-character note fits in ten lines
-    /// at [`FLOOR_WIDTH`], and would not have at planning's 200px.
+    /// clamp. This pins the floor to the crossing width the model gives, and
+    /// pins the clamp where it is.
+    ///
+    /// It does NOT prove a capped note fits ten real lines at 220px: the floor
+    /// and the crossing width come from the same two constants, so this is a
+    /// drift guard, not a measurement. See [`FLOOR_WIDTH`] for the fixture that
+    /// measures it for real.
     #[test]
-    fn the_narrow_window_floor_holds_a_capped_note_in_ten_lines() {
+    fn the_floor_tracks_the_crossing_width_and_the_clamp_never_moves() {
         assert!(
             crossing_width(AUTHORING_CAP) <= FLOOR_WIDTH,
             "the floor must be at or above the crossing width ({})",

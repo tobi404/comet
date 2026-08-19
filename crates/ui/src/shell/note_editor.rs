@@ -29,7 +29,11 @@ use zeron_proto::ChatNote;
 /// storage cannot promise it, because iOS writes registry rows directly and
 /// never passes the Mutate RPC (`docs/adr/0001-chat-notes-sync-in-the-registry-
 /// doc.md`). Every renderer still handles a longer note.
-const MAX_CHARS: usize = 280;
+///
+/// `pub(super)` for one reader: the Note Card's narrow-window floor is sized to
+/// hold exactly this many characters inside its ten-line clamp, and a copy of
+/// the number there would let the floor go stale the day this one moves.
+pub(super) const MAX_CHARS: usize = 280;
 
 /// The counter stays hidden until the last 40 characters. A field most people
 /// fill to thirty characters does not need a permanent tally.

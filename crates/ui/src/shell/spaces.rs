@@ -868,16 +868,9 @@ impl Shell {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.open_chat(open_id.clone(), cx);
                         }))
-                        .on_mouse_down(MouseButton::Left, {
-                            let press_id = id.clone();
-                            cx.listener(move |this, _: &gpui::MouseDownEvent, _, cx| {
-                                this.note_card_press(&press_id, cx);
-                            })
-                        })
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                                this.note_card_press(&menu_id, cx);
                                 this.chat_menu.open((menu_id.clone(), event.position));
                                 cx.notify();
                             }),
@@ -912,7 +905,10 @@ impl Shell {
                         // never drift to a second marker geometry. Last child:
                         // it paints over the selected wash.
                         .children(super::note_bar::note_bar(chat.note.as_ref()))
-                        .children(self.note_card_anchor_probe(&id)),
+                        // The same one line the active rows carry: the shelf
+                        // opens the same card through the same wiring, never a
+                        // second copy of it.
+                        .note_card_wiring(self, &id, cx),
                 );
             }
             // Mount fade: the shelf popping in whole read as jank — a quick
