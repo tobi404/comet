@@ -285,9 +285,17 @@ and no Dynamic Type. The phone has two row shapes and text that scales, so it st
 mark as a rule instead of a number - and at the default size that rule lands within a point of
 the desktop's number, on a session row that measures within a point of the desktop's row.
 
-Worth reporting sideways: the desktop's 18px is itself one title line (its title's line height is
-19px), so the two apps are describing the same mark. If the desktop ever gains a second row shape
-or a text-size setting, the rule is the form that survives it.
+Worth reporting sideways, and **flagged as an inference rather than a fact**: the desktop's 18px
+looks like it is also one title line, which would mean the two apps are describing the same mark.
+The desktop row's title is `text_size(px(13.0))` (`shell.rs`, `render_chat_row`) - the same size
+as the Note Card's text, whose line height the desktop spec records as 19px - but the *row's* own
+line height is stated nowhere and was not measured here. Do not carry this into
+[07](./07-write-the-spec.md) as established. It is a pleasing reading of the desktop's number and
+nothing in this ticket's answer depends on it: the rule is chosen for the phone's Dynamic Type,
+not for symmetry with the desktop.
+
+Either way, if the desktop ever gains a second row shape or a text-size setting, a rule is the
+form that survives it and a number is not.
 
 ### The prototype
 
@@ -314,3 +322,19 @@ tapped:
 
 The Dynamic Type findings need the simulator's own dial, which is not a launch argument:
 `xcrun simctl ui <udid> content_size accessibility-extra-extra-extra-large`.
+
+### Assets
+
+The four verdicts that were made by eye rather than by measurement, so they can be audited
+without a simulator. Everything else in this answer is a number and is reproducible from the
+commands above.
+
+- [Dynamic Type: fixed 18pt against the rule](../assets/04-dynamic-type-fixed-vs-rule.png) -
+  candidates A and E at `accessibility-large`. The decision.
+- [The clamp on the shelf](../assets/04-clamp-shelf-xxxl.png) - E against G at
+  `accessibility-extra-extra-extra-large`. Left, three markers meet and read as one stripe;
+  right, the clamp keeps them apart.
+- [The shelf's dim](../assets/04-shelf-dim.png) - the marker at 100%, 75% and 55% on the real
+  shelf. Question 3.
+- [The mechanism the shelf refuses](../assets/04-mechanism-shelf-refusal.png) - `rowOverlay`
+  against `titleOverlay`. Right, the harness mark pushes the marker off the row's leading edge.
