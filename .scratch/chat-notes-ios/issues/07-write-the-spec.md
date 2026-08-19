@@ -4,9 +4,12 @@ Map: [Chat Notes on iOS](../map.md)
 Type: task
 Status: open
 Blocked by: 01 (resolved), 02 (resolved), 03 (resolved), 04 (resolved), 05 (resolved),
-            06 (resolved), 08 (resolved)
+            06 (resolved), 08 (resolved), 09 (open)
 
-**Unblocked. This is the last ticket on the map.**
+**Blocked again, deliberately.** It was unblocked, and
+[09 - The Note Card's corner, on the system's preview platter](./09-the-note-cards-corner.md) was
+charted after it: the card renders as an oval and the shape it should have is one more thing to
+look at before the spec freezes a number. 09 is the last ticket; this is still the one after it.
 
 ## Question
 
@@ -45,6 +48,11 @@ shape and for standard. Match it:
   numbers. 08 also amends [06](./06-menu-and-note-editor-sheet.md): read that amendment before
   describing `protoCardHeight`'s mechanism, because the mechanism is right and 06's measurement
   was not.
+
+- **The card's corner from [09](./09-the-note-cards-corner.md), not from
+  [05](./05-the-reveal.md).** 05's table says radius 12pt and 09 was charted because the screen
+  disagrees. Take 09's number and 09's mechanism; if 09 accepts the platter's own corner, carry
+  that as a stated limit and do not restate the 12.
 
 Two things to settle while writing, not before:
 
