@@ -3,7 +3,8 @@
 Map: [Chat Notes on iOS](../map.md)
 Type: task
 Status: open
-Blocked by: 01, 02, 03, 04, 05, 06, 08
+Blocked by: 01 (resolved), 02 (resolved), 03 (resolved), 04 (resolved), 05 (resolved),
+            06 (resolved), 08
 
 ## Question
 
