@@ -174,7 +174,7 @@ What was ruled out:
 - **The attachment point is not the cause.** The same press was built with the menu on the row's
   wash box and on the row's own content stack inside the Button's label (`-rinner`). Both clip
   identically, so no attachment escapes it.
-- **An explicit `.frame(height:)` does fix it**, completely: at that point the 671-character
+- **An explicit `.frame(height:)` does fix it**, completely: at that point the 779-character
   fixture renders ten whole lines and elides. See
   [the over-cap note](../assets/05-note-card-over-cap.png).
 
@@ -195,7 +195,7 @@ it on demand, and 07 should not write a number this ticket did not measure.
 
 **Both clip. Neither widens or wraps the layout, on any candidate.**
 
-- **The 671-character note** (the desktop's own fixture size, past the 280 cap) fills the card to
+- **The 779-character note** (written to match the desktop's own fixture, past the 280 cap) fills the card to
   ten lines and elides with a tail ellipsis. On a row - which only the losing candidates do - it
   elides to one line. Nothing scrolls.
 - **The unbreakable URL** - one 118-character token with no space in it - **wraps at character
@@ -279,7 +279,7 @@ For [07 - Write the spec](./07-write-the-spec.md):
 
 1. **A row with a note renders at the same height as the same row without one** - 61.7pt on the
    session row, 36pt on the shelf. V1 adds no layout anywhere.
-2. **The 671-character fixture renders ten lines and elides**, and does not scroll.
+2. **The 779-character fixture renders ten lines and elides**, and does not scroll.
 3. **The unbreakable-URL fixture does not widen the card**: the card's width stays at or below
    324pt with the token present.
 4. **The card's forced height equals its measured content height.** This is the non-obvious one:
@@ -340,6 +340,15 @@ frames need the simulator's own dial:
 The reorder recording:
 `xcrun simctl io <udid> recordVideo`, tap `resort` on the bar, then step the frames.
 
+### Amended by 06
+
+**The over-cap fixture is 779 characters, not 671.** Counted by
+[06 - The long-press menu and the Note Editor sheet](./06-menu-and-note-editor-sheet.md). The
+desktop spec's own fixture is 671 (§7) and this one was written to match it; it did not. **Every
+finding above stands** - the card still fills to ten lines, still elides, still never scrolls -
+and now stands at the right number. The fixture text is deliberately unchanged, because editing
+it would invalidate the frames below.
+
 ### Assets
 
 The verdicts made by eye rather than by measurement, so they can be audited without a simulator.
@@ -354,7 +363,7 @@ The verdicts made by eye rather than by measurement, so they can be audited with
 - [The card's width](../assets/05-note-card-width.png) - 240, 280, 300 and 340pt. Question 4.
 - [The preview's clip](../assets/05-note-card-clip.png) - self-sizing against an explicit height.
   The finding under question 4.
-- [The 671-character note](../assets/05-note-card-over-cap.png) - ten lines, elided. Question 5.
+- [The 779-character note](../assets/05-note-card-over-cap.png) - ten lines, elided. Question 5.
 - [The unbreakable URL](../assets/05-note-card-url.png) - wrapped, never widened. Question 5.
 - [The shelf card](../assets/05-shelf-card.png) - the same gesture on the 36pt row. Question 2.
 - [V6's mixed-height reorder](../assets/05-v6-mixed-height-resort.png) - the FLIP glide, frame by

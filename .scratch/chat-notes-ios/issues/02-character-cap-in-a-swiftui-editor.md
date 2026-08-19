@@ -110,3 +110,33 @@ defects: it fights the IME, it draws then removes the over-cap character, and it
 Pinyin keyboard, and paste 300 characters); whether a system paste reaches the delegate; and, only
 if the fallback is taken, whether the caret holds through an over-cap paste into the middle of a
 full note.
+
+## Amended by 06
+
+The recommendation above is **confirmed by typing** in
+[06 - The long-press menu and the Note Editor sheet](./06-menu-and-note-editor-sheet.md): the
+plural delegate fires, the composition stand-down works, the `textViewDidChange` floor catches
+the commit, and a system paste arrives at the delegate and clamps. Nothing is retracted. Two
+things above are wrong in a way that would cost an implementer real time.
+
+**1. The Swift label is `shouldChangeTextInRanges`, not `shouldChangeTextIn`.** This answer names
+the ObjC selector correctly and never names the Swift one, and the spelling that looks right -
+`shouldChangeTextIn ranges: [NSValue]`, matching the singular's label - **compiles, satisfies no
+protocol requirement, exports no selector and silently never fires**. There is no warning. The
+cap then holds only from `textViewDidChange`, which draws the over-cap character and takes it
+back, so the failure looks like a design flaw in the recommendation rather than a typo. Confirmed
+at the ObjC runtime, not by reading: `responds(to:)` returns false for the wrong spelling and
+true for the right one.
+
+**2. "The caret never has to be restored" holds only for a PERMITTED edit.** Where the delegate
+returns true, UIKit applies the edit and moves the caret, and the claim is right. On the clamped
+path the delegate applies the edit itself, and `replace(_:withText:)` leaves the caret at offset
+0 of what it wrote - so a 300-character paste clamped to the cap ends with the caret before the
+first character. The restore must also be **deferred one run loop**; set inline it reads back
+correctly and is then dragged back to 0 by the SwiftUI round trip.
+
+**Also settled, from 06's three "verify by typing" items**: composition can exceed the cap (four
+marked characters against a cap of three), so desktop known limit 5 carries unchanged; and a
+system paste does reach the delegate. Not directly seen in one observation: an over-cap **commit**
+being floor-cut - both halves are proved separately, and 06 names it as a test rather than a
+claim.
