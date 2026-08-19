@@ -845,23 +845,39 @@ impl Shell {
                         .cursor_pointer()
                         .when(is_selected, |el| el.bg(selected_wash))
                         .when(!is_selected, |el| el.hover(|s| s.bg(theme.glass_hover())))
-                        .on_hover(cx.listener(move |this, entered: &bool, _, cx| {
-                            if *entered {
-                                if this.archived_hover.as_deref() != Some(hover_id.as_str()) {
-                                    this.archived_hover = Some(hover_id.clone());
+                        .on_hover({
+                            let has_note = chat.note.is_some();
+                            cx.listener(move |this, entered: &bool, _, cx| {
+                                if *entered {
+                                    if this.archived_hover.as_deref() != Some(hover_id.as_str()) {
+                                        this.archived_hover = Some(hover_id.clone());
+                                        cx.notify();
+                                    }
+                                } else if this.archived_hover.as_deref() == Some(hover_id.as_str())
+                                {
+                                    this.archived_hover = None;
                                     cx.notify();
                                 }
-                            } else if this.archived_hover.as_deref() == Some(hover_id.as_str()) {
-                                this.archived_hover = None;
-                                cx.notify();
-                            }
-                        }))
+                                // The shelf opens the same card through the
+                                // same render site — one more branch in the
+                                // listener the row already has, exactly as the
+                                // active rows do.
+                                this.note_card_hover(&hover_id, *entered, has_note, cx);
+                            })
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.open_chat(open_id.clone(), cx);
                         }))
+                        .on_mouse_down(MouseButton::Left, {
+                            let press_id = id.clone();
+                            cx.listener(move |this, _: &gpui::MouseDownEvent, _, cx| {
+                                this.note_card_press(&press_id, cx);
+                            })
+                        })
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                this.note_card_press(&menu_id, cx);
                                 this.chat_menu.open((menu_id.clone(), event.position));
                                 cx.notify();
                             }),
@@ -895,7 +911,8 @@ impl Shell {
                         // Same helper as the active rows, so the shelf can
                         // never drift to a second marker geometry. Last child:
                         // it paints over the selected wash.
-                        .children(super::note_bar::note_bar(chat.note.as_ref())),
+                        .children(super::note_bar::note_bar(chat.note.as_ref()))
+                        .children(self.note_card_anchor_probe(&id)),
                 );
             }
             // Mount fade: the shelf popping in whole read as jank — a quick

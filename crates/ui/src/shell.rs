@@ -53,6 +53,7 @@ use crate::theme::Theme;
 use crate::transcript::{self, Transcript, TranscriptEvent};
 
 mod note_bar;
+mod note_card;
 mod note_editor;
 mod spaces;
 mod tabs;
@@ -864,6 +865,25 @@ pub struct Shell {
     /// swaps to the archive button (t3code's settle-on-hover); hovering the
     /// row body leaves the status readable.
     chat_status_hover: Option<String>,
+    /// The visible Note Card plus its `menu_out` exit phase. One card, one
+    /// render site — the active rows and the archived shelf share it.
+    note_card: popover::Popup<note_card::NoteCard>,
+    /// The 350ms open delay.
+    note_card_wait: Option<note_card::NoteCardWait>,
+    /// The 120ms close delay. Cancelled by dropping the task.
+    note_card_leave: Option<Task<()>>,
+    /// The hovered row's bounds, captured per frame by a `canvas` child of that
+    /// one row.
+    note_card_anchor: note_card::AnchorCell,
+    /// The click-dismiss latch: the Chat whose row swallowed a mouse-down and
+    /// stays cardless until the pointer leaves it. Not one of the spec's four
+    /// fields, but §5's latch has nowhere else to live.
+    note_card_latch: Option<String>,
+    /// Card heights measured one frame late — the vertical centring needs a
+    /// height before the card exists.
+    note_card_heights: note_card::HeightCache,
+    /// Bumped per open so a stale 350ms timer cannot fire into a newer wait.
+    note_card_generation: u64,
     /// Scroll position of the sidebar lists region (drives its edge fades).
     sidebar_scroll: gpui::ScrollHandle,
     /// `settings.last_space_id` applied once after the first spaces frame.
@@ -1111,6 +1131,13 @@ impl Shell {
             add_space: None,
             spaces_menu: popover::Popup::default(),
             chat_status_hover: None,
+            note_card: popover::Popup::default(),
+            note_card_wait: None,
+            note_card_leave: None,
+            note_card_anchor: Default::default(),
+            note_card_latch: None,
+            note_card_heights: Default::default(),
+            note_card_generation: 0,
             sidebar_scroll: gpui::ScrollHandle::new(),
             space_boot_applied: false,
             sound_prev: std::collections::HashMap::new(),
@@ -3574,6 +3601,7 @@ impl Shell {
             .on_hover({
                 let fade_hover = motion::hover_listener(fade_key.clone());
                 let hover_id = id.clone();
+                let has_note = note.is_some();
                 cx.listener(move |this, hovered: &bool, window, cx| {
                     fade_hover(hovered, window, cx);
                     if *hovered {
@@ -3585,15 +3613,29 @@ impl Shell {
                         this.chat_status_hover = None;
                         cx.notify();
                     }
+                    // The WHOLE row is the Note Card's trigger — one more
+                    // branch in the listener the row already has, leaving the
+                    // Archive pill's swap above exactly as it was.
+                    this.note_card_hover(&hover_id, *hovered, has_note, cx);
                 })
             })
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_chat(select_id.clone(), cx);
             }))
+            // A left press selects the Chat and the pointer stays on the row —
+            // the latch is what keeps the card from returning 350ms later on
+            // top of the Chat the click just opened.
+            .on_mouse_down(MouseButton::Left, {
+                let press_id = id.clone();
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                    this.note_card_press(&press_id, cx);
+                })
+            })
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    this.note_card_press(&menu_id, cx);
                     this.chat_menu.open((menu_id.clone(), event.position));
                     cx.notify();
                 }),
@@ -3689,6 +3731,9 @@ impl Shell {
             // The resting marker, last so it paints OVER the row's hover and
             // selected washes (both are this element's own background).
             .children(note_bar::note_bar(note))
+            // Mounted only while this row is the Note Card's target: it writes
+            // the row's window bounds for the card to centre on.
+            .children(self.note_card_anchor_probe(&id))
             .into_any_element()
     }
 
@@ -4749,6 +4794,14 @@ impl Shell {
         }
 
         if let Some(overlay) = self.render_note_editor(viewport, window, cx) {
+            overlays.push(overlay);
+        }
+
+        // The Note Card renders here, from the shell's top-level overlay pass,
+        // because it cannot render anywhere else: `deferred` does not escape
+        // ancestor clipping and the rows live inside a scroll region, so a
+        // card mounted in a row would be clipped to the sidebar.
+        if let Some(overlay) = self.render_note_card(viewport, cx) {
             overlays.push(overlay);
         }
 
