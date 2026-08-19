@@ -21,10 +21,13 @@ cannot enlarge. The desktop accepted a version of this as its known limit 1, "th
 pointer-only"; the phone should decide whether it accepts the same thing or does better, and
 say which.
 
-**This is typed `grilling`, but questions 3, 4 and 5 cannot be answered in conversation** - the
-card at the accessibility sizes, the clamp against large text, and Reduce Motion all have to be
-looked at. `proto/05-the-reveal` is installable and already carries the card and its dials, so
-start it and drive the simulator's own text-size dial
+**This is typed `grilling`, but questions 3, 4, 5 and 7 cannot be answered in conversation** -
+the card at the accessibility sizes, the clamp against large text, Reduce Motion, and the sheet
+against a keyboard that does not shrink all have to be looked at. Start
+**`proto/06-menu-and-editor`**, not `proto/05-the-reveal`: it stacks on 05, so it carries the
+card and its dials **and** the Note Editor, which 05's branch does not have at all. Launch with
+`-demo -proto-reveal` for the card and `-demo -proto-editor` for the sheet and the slot row, and
+drive the simulator's own text-size dial
 (`xcrun simctl ui <udid> content_size accessibility-extra-extra-extra-large`) rather than
 re-deriving them.
 
