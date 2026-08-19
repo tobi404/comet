@@ -1,6 +1,9 @@
 # Slash commands: per-workspace discovery
 
-Status: IMPLEMENTED on `slash-commands-per-workspace`, not yet merged · 2026-08-16 investigation (project skills missing from the composer popup).
+Status: IMPLEMENTED on `slash-commands-per-workspace`, not yet merged · 2026-08-16 investigation (project skills missing from the composer popup) · merged with `main` on 2026-08-19, after #160 gave the native claude/codex drivers their own per-harness discovery.
+
+Every `file.rs:NNN` reference below is a snapshot of the 2026-08-16 investigation. The
+reasoning holds; the line numbers have moved.
 
 ## Why
 
@@ -130,8 +133,36 @@ async fn commands(&self, cwd: Option<&str>) -> Result<Vec<SlashCommand>, Harness
   the new cwd dead for any agent that answers initialize, and would fill every cwd key with
   one identical list.
 - `cwd: None` means `$HOME`. That is today's behavior, kept for callers with no workspace.
-- The trait default still returns an empty list for non-ACP harnesses. `MockHarness` and
-  `AcpHarness` are the only implementors, so the signature change is contained.
+- The trait default still returns an empty list for harnesses whose wire carries no
+  listing. Since #160 the native `claude` and `codex` drivers override it. `claude` is
+  scoped here too (below); `codex` is not (see Non-goals).
+
+### The claude probe
+
+`claude` is not an ACP agent, so there is no `session/new` to carry a cwd. The CLI resolves
+`<cwd>/.claude/skills` and the project's own commands relative to **where the process
+runs**, so for this driver the workspace IS the child's working directory.
+
+Measured on CLI 2.1.228, driving the same `initialize` control request by hand and varying
+only the directory:
+
+| probe cwd | commands |
+|---|---|
+| a project holding two marker skills | **81** |
+| a bare directory | 79 |
+
+The two markers are exactly the difference.
+
+- `discover_commands` takes the cwd and sets `current_dir` — the opposite of the ACP probe,
+  for the reason above.
+- An absent directory (a deleted worktree) is dropped rather than passed on. `spawn` fails
+  it with `ErrorKind::NotFound`, which this driver maps to `HarnessError::NotInstalled`, so
+  the user would be told claude is not installed. Falling back to the engine's own
+  directory loses the project's commands and keeps the built-ins, the same trade the ACP
+  probe makes when a cwd is rejected.
+- #160's per-harness `OnceCell` is deleted. It would pin whichever workspace probed first
+  and serve that list to every other one. The engine cache owns caching for this driver
+  too, exactly as it does for ACP.
 
 `discover_models` keeps its own `OnceCell` and its `$HOME` cwd. Models are not treated as
 workspace-scoped in this spec. See Non-goals.
@@ -311,6 +342,14 @@ The tests cover that function, next to the existing pure-function tests at
 
 - **Models.** They keep the `$HOME` probe. `ListCommandsParams` and the cache key are
   shaped so models can join later without another interface change.
+- **Per-workspace discovery for codex.** `claude` is scoped (above). `codex` is not, and it
+  needs a different change rather than the same one: its `skills/list` reply is already an
+  array of per-cwd groups under `data`, which `parse_skill_commands` flattens and dedupes.
+  Scoping it means filtering those groups by the requested workspace, not setting
+  `current_dir`, and the group's own cwd field could not be confirmed here without the real
+  binary. `codex` therefore keeps #160's per-harness `OnceCell` and takes the `cwd` and
+  ignores it, documented in place. The engine cache keys its answer per workspace anyway,
+  so nothing regresses.
 - **File watchers on `.claude`.** The TTL plus the live event covers the real workflow.
 - **Cleaning the 666 stale directories.** Separate chore.
 - **Changing how an agent resolves skills.** Symlinked skills work correctly once the cwd
