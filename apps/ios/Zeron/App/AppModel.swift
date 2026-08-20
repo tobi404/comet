@@ -308,6 +308,24 @@ final class AppModel {
         chats(in: spaceId).map { indicator(for: $0) }.min { $0.rawValue < $1.rawValue }
     }
 
+    /// "space @ device" — the session header's format, and the string the
+    /// session row puts on its context line.
+    ///
+    /// It lives here rather than on `ChatRow` because the Note Card restates
+    /// it (§5) and the archived shelf row never built one at all, so the two
+    /// row shapes and the card all say exactly the same thing.
+    ///
+    /// The space NAME and not the cwd basename is what the desktop row shows;
+    /// they differ once a space has been renamed, or when the session runs in
+    /// a worktree off to the side. No offline marker: the space dropdown
+    /// carries device liveness.
+    func location(for chat: Chat) -> String {
+        let name = space(for: chat)?.displayName
+            ?? chat.cwd.map { ($0 as NSString).lastPathComponent }
+            ?? "?"
+        return "\(name) @ \(deviceName(chat.deviceId))"
+    }
+
     func deviceName(_ deviceId: String) -> String {
         (demo?.devices ?? workspace?.devices)?.first { $0.id == deviceId }?.name ?? deviceId
     }

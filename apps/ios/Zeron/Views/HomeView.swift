@@ -320,6 +320,9 @@ struct ChatRow: View {
                     .zIndex(1)
             }
         }
+        // The long press sits on the whole row and not on the Button, so a
+        // bare row lifts everything it draws — the badge included (§5, §6).
+        .chatNoteMenu(chat, location: location, archived: false)
     }
 
     private func content(indicator: ChatIndicator, reservesPullRequest: Bool) -> some View {
@@ -381,16 +384,9 @@ struct ChatRow: View {
         .contentShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    /// "space @ device" (the session header's format). The space name (not
-    /// the cwd basename) is what the desktop row shows — they differ once a
-    /// space has been renamed, or when the session runs in a worktree off to
-    /// the side. No offline marker: the dropdown carries device liveness.
-    private var location: String {
-        let space = model.space(for: chat)?.displayName
-            ?? chat.cwd.map { ($0 as NSString).lastPathComponent }
-            ?? "?"
-        return "\(space) @ \(model.deviceName(chat.deviceId))"
-    }
+    /// "space @ device". The string itself is `AppModel`'s, because the Note
+    /// Card restates it while the preview has this row off screen (§5).
+    private var location: String { model.location(for: chat) }
 }
 
 func relativeTime(_ ms: Int64) -> String {

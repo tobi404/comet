@@ -130,7 +130,12 @@ struct ArchivedSection: View {
     }
 
     private func row(_ chat: Chat) -> some View {
-        ArchivedChatRow(chat: chat) { path.append(.chat(chat.id)) }
+        // The location string is handed in, not built by the row: the shelf
+        // row never showed one, and the Note Card it opens has to say exactly
+        // what the session row's card says (§5).
+        ArchivedChatRow(chat: chat, location: model.location(for: chat)) {
+            path.append(.chat(chat.id))
+        }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             .listRowInsets(Self.rowInsets)
@@ -179,6 +184,9 @@ struct ArchivedSection: View {
 /// list-level modifiers (insets, swipe) at its own call site.
 struct ArchivedChatRow: View {
     let chat: Chat
+    /// "space @ device", for the Note Card the long press opens (§5). The row
+    /// itself never draws it — the shelf row has no context line.
+    let location: String
     let onSelect: () -> Void
 
     /// The row's own title line box — the resting marker's height rule (§4).
@@ -209,5 +217,8 @@ struct ArchivedChatRow: View {
         }
         .buttonStyle(PressWashButtonStyle())
         .restingNote(chat.note, titleLine: titleLine)
+        // One mechanism on both row shapes: the 36pt row opens the same card
+        // from the same gesture, with no degrade (§5, test 27).
+        .chatNoteMenu(chat, location: location, archived: true)
     }
 }

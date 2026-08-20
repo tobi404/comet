@@ -15,13 +15,8 @@ import XCTest
 
 // MARK: - Rendering a row
 
-/// The pixel scale the rows render at. 3 is a real device's, and it is what
-/// makes a sub-point measurement honest: one pixel is 1/3 of a point.
-private let renderScale: CGFloat = 3
-
-/// An iPhone 17 Pro's width in points. The marker's position does not depend
-/// on it; the title's truncation does.
-private let screenWidth: CGFloat = 402
+// `Raster`, `raster(_:)` and `srgb(_:)` live in `RasterSupport.swift` —
+// the Note Card's tests (§5) measure rendered output the same way.
 
 /// The list's `listRowInsets` leading, read off the two production
 /// constants rather than restated. The marker's inset composes with this one;
@@ -32,61 +27,6 @@ private let screenWidth: CGFloat = 402
 /// The centre of the marker's 3pt column, in points from the screen edge.
 @MainActor private let markerCentreX =
     sessionListInset + NoteMarker.leadingInset + NoteMarker.width / 2
-
-private struct Raster {
-    let pixels: [UInt8]  // RGBA8, premultiplied-last
-    let width: Int
-    let height: Int
-
-    /// The colour at a POINT coordinate, sampled at the pixel that contains it.
-    func at(x: CGFloat, y: CGFloat) -> [Double] {
-        let px = min(width - 1, max(0, Int(x * renderScale)))
-        let py = min(height - 1, max(0, Int(y * renderScale)))
-        let i = (py * width + px) * 4
-        return [Double(pixels[i]) / 255, Double(pixels[i + 1]) / 255, Double(pixels[i + 2]) / 255]
-    }
-
-    /// The vertical extent, in POINTS, of everything in the column at `x`
-    /// that differs from `background` by more than half the way to `ink`.
-    /// Half-way is the antialiased edge, so the run this returns is the mark's
-    /// true extent to within a third of a point.
-    func runHeight(atX x: CGFloat, ink: [Double], background: [Double]) -> CGFloat {
-        let px = min(width - 1, max(0, Int(x * renderScale)))
-        let full = distance(ink, background)
-        var first = -1, last = -1
-        for py in 0..<height {
-            let i = (py * width + px) * 4
-            let c = [Double(pixels[i]) / 255, Double(pixels[i + 1]) / 255, Double(pixels[i + 2]) / 255]
-            if distance(c, background) > full / 2 {
-                if first < 0 { first = py }
-                last = py
-            }
-        }
-        guard first >= 0 else { return 0 }
-        return CGFloat(last - first + 1) / renderScale
-    }
-
-    private func distance(_ a: [Double], _ b: [Double]) -> Double {
-        zip(a, b).map { ($0 - $1) * ($0 - $1) }.reduce(0, +).squareRoot()
-    }
-}
-
-@MainActor
-private func raster<V: View>(_ view: V) -> Raster {
-    let renderer = ImageRenderer(content: AnyView(view))
-    renderer.scale = renderScale
-    renderer.isOpaque = true
-    guard let cg = renderer.cgImage else { preconditionFailure("row did not render") }
-    let (w, h) = (cg.width, cg.height)
-    var pixels = [UInt8](repeating: 0, count: w * h * 4)
-    let ctx = CGContext(
-        data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-        space: CGColorSpace(name: CGColorSpace.sRGB)!,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    )!
-    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
-    return Raster(pixels: pixels, width: w, height: h)
-}
 
 /// Both row shapes, laid out exactly as their `List` lays them out: the
 /// section's leading and trailing insets, on the page colour they really
@@ -120,15 +60,13 @@ private func fixture(note: ChatNote?) -> Chat {
     )
 }
 
-private let slot = "sky"
-private var ink: [Double] { channels(NoteSlot.color(for: slot)) }
-private var page: [Double] { channels(Theme.surface) }
+/// The row's own `space @ device` string. The shelf row takes it as a
+/// parameter for the Note Card it opens (§5); it never draws it.
+private let fixtureLocation = "zeron @ MacBook Pro"
 
-private func channels(_ color: Color) -> [Double] {
-    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-    UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a)
-    return [Double(r), Double(g), Double(b)]
-}
+private let slot = "sky"
+private var ink: [Double] { srgb(NoteSlot.color(for: slot)) }
+private var page: [Double] { srgb(Theme.surface) }
 
 // MARK: - The clamp arithmetic (§4)
 
@@ -167,8 +105,11 @@ final class NoteMarkerRenderTests: XCTestCase {
             .environment(model)
     }
 
-    private func shelfRow(note: ChatNote?) -> some View {
-        ArchivedChatRow(chat: fixture(note: note)) {}
+    /// The shelf row reads `AppModel` now — the long press it carries needs
+    /// the archive and clear verbs (§6).
+    private func shelfRow(note: ChatNote?, model: AppModel) -> some View {
+        ArchivedChatRow(chat: fixture(note: note), location: fixtureLocation) {}
+            .environment(model)
     }
 
     /// 14. The height rule resolves to the title's line box — 17pt on both row
@@ -177,7 +118,7 @@ final class NoteMarkerRenderTests: XCTestCase {
         let model = demoModel()
         let note = ChatNote(text: "Ask Dana before this merges", color: slot)
 
-        for row in [AnyView(sessionRow(note: note, model: model)), AnyView(shelfRow(note: note))] {
+        for row in [AnyView(sessionRow(note: note, model: model)), AnyView(shelfRow(note: note, model: model))] {
             let r = raster(inList(row))
             let marked = r.runHeight(atX: markerCentreX, ink: ink, background: page)
             XCTAssertEqual(marked, 17.0, accuracy: 0.5)
@@ -195,7 +136,8 @@ final class NoteMarkerRenderTests: XCTestCase {
     /// adjacent markers meet and three notes render as one stripe.
     func testTheShelfClampBindsAtTheLargestTextSize() {
         let note = ChatNote(text: "Gamut clamp was silent", color: slot)
-        let shelf = raster(inList(shelfRow(note: note), dynamicType: .accessibility5))
+        let shelf = raster(inList(shelfRow(note: note, model: demoModel()),
+                                  dynamicType: .accessibility5))
         let h = shelf.runHeight(atX: markerCentreX, ink: ink, background: page)
         XCTAssertGreaterThan(h, 0)
         XCTAssertLessThanOrEqual(h, 36 - 2 * NoteMarker.cap + 0.5)
@@ -233,8 +175,8 @@ final class NoteMarkerRenderTests: XCTestCase {
             shape: "session row"
         )
         assertOnlyTheMarkerBandDiffers(
-            bare: raster(inList(shelfRow(note: nil))),
-            noted: raster(inList(shelfRow(note: note))),
+            bare: raster(inList(shelfRow(note: nil, model: model))),
+            noted: raster(inList(shelfRow(note: note, model: model))),
             shape: "shelf row"
         )
     }
@@ -258,7 +200,7 @@ final class NoteMarkerRenderTests: XCTestCase {
     /// content carries. At 55% it measures 2.51:1 and no tone fixes it.
     func testTheShelfMarkerIsNotDimmed() {
         let note = ChatNote(text: "Ask Dana", color: slot)
-        let shelf = raster(inList(shelfRow(note: note)))
+        let shelf = raster(inList(shelfRow(note: note, model: demoModel())))
         // Mid-row on the pinned 36pt shelf row, well inside the marker's
         // 9.5-26.5pt span, where a 0.55 dim would be unmissable.
         let sampled = shelf.at(x: markerCentreX, y: 18)
@@ -275,7 +217,7 @@ final class NoteMarkerRenderTests: XCTestCase {
         XCTAssertEqual(sessionListInset, shelfListInset, "the two sections' insets drifted")
         XCTAssertEqual(sessionListInset + NoteMarker.leadingInset, 14)
 
-        for row in [AnyView(sessionRow(note: note, model: model)), AnyView(shelfRow(note: note))] {
+        for row in [AnyView(sessionRow(note: note, model: model)), AnyView(shelfRow(note: note, model: model))] {
             let r = raster(inList(row))
             let mid = CGFloat(r.height) / renderScale / 2
             // Inside the mark, and one point clear of it on the page side.
