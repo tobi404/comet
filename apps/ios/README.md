@@ -84,6 +84,7 @@ Theme/                  theme.rs port: oklch→sRGB converter, exact palette,
 | Harness/model picker popover + curated catalogs | Brand-mark cards + catalog menu + reasoning-ladder chips (`HarnessCatalog.swift`, ported from crates/harness) |
 | Add-space palette (device + folder browser) | New-space sheet: device tabs + remote folder browser (ListFolders over the device-room relay, git repos badged) |
 | ControlRpc over device-room relay | `DeviceRelayClient` — binary `uleb128(len)+header+payload` frames, `{"s","k","to","from"}` header, ndjson ControlRpc; used for ListFolders + direct-to-host `Mutate {createSpace}` (local doc-write fallback when the host is offline) |
+| Chat Note bar on the sidebar row (the desktop's "stub") | Resting marker: 3pt capsule on both row shapes, as tall as the row's own title line, undimmed on the archived shelf (`NoteMarker.swift`) |
 | Hover timestamps / copy | Context menus |
 | gpui `list()` sum-tree virtualization | `LazyVStack` + stable row ids + version fingerprints |
 | Stick-to-bottom spring, wheel-up breaks pin | Scroll-phase-gated pin + spring scrollTo, same 70/320pt thresholds |

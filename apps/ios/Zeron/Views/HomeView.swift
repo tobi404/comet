@@ -305,6 +305,8 @@ struct ChatRow: View {
                 content(indicator: indicator, reservesPullRequest: pullRequest != nil)
             }
             .buttonStyle(PressWashButtonStyle())
+            .noteMarker(chat.note)
+            .noteValue(chat.note)
             if let pullRequest {
                 PullRequestBadge(summary: pullRequest)
                     .padding(.trailing, 8)
@@ -338,12 +340,14 @@ struct ChatRow: View {
                 }
             }
 
-            // Line 2: the session title.
+            // Line 2: the session title. Its line box is the resting
+            // marker's height (§4).
             Text(chat.displayTitle)
                 .font(Theme.sans(13))
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .noteMarkerTitle()
 
             // Line 3: harness brand mark, then the branch when the engine
             // stamped one; the Working spinner rides bottom-right.

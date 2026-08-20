@@ -129,44 +129,21 @@ struct ArchivedSection: View {
         }
     }
 
-    /// Slim row: dimmed harness mark, muted title, time-ago (spaces.rs
-    /// archived row — h 36, mark 14, title 13, time 11).
     private func row(_ chat: Chat) -> some View {
-        Button {
-            path.append(.chat(chat.id))
-        } label: {
-            HStack(spacing: 10) {
-                if let harness = chat.config?.harness {
-                    HarnessBadge(harness: harness, size: 14, dimmed: true)
+        ArchivedChatRow(chat: chat) { path.append(.chat(chat.id)) }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(Self.rowInsets)
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button {
+                    withAnimation(Motion.resort) {
+                        model.unarchive(chatId: chat.id)
+                    }
+                } label: {
+                    Label("Unarchive", systemImage: "arrow.up.bin")
                 }
-                Text(chat.displayTitle)
-                    .font(Theme.sans(13))
-                    .foregroundStyle(Theme.text.opacity(0.55))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text(relativeTime(chat.lastMessageAt ?? chat.createdAt))
-                    .font(Theme.sans(11))
-                    .foregroundStyle(Theme.textMuted.opacity(0.55))
-                    .fixedSize()
+                .tint(Theme.surfaceRaised)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 36)
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(PressWashButtonStyle())
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-        .listRowInsets(Self.rowInsets)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button {
-                withAnimation(Motion.resort) {
-                    model.unarchive(chatId: chat.id)
-                }
-            } label: {
-                Label("Unarchive", systemImage: "arrow.up.bin")
-            }
-            .tint(Theme.surfaceRaised)
-        }
     }
 
     private func showMore(remaining: Int) -> some View {
@@ -190,5 +167,45 @@ struct ArchivedSection: View {
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .listRowInsets(Self.rowInsets)
+    }
+}
+
+/// Slim row: dimmed harness mark, muted title, time-ago (spaces.rs archived
+/// row — h 36, mark 14, title 13, time 11).
+///
+/// A `struct` and not an inline builder inside `ArchivedShelf`, so that §9's
+/// tests can render this row shape on its own — `ArchivedShelf` itself only
+/// exists inside a `List`, which no renderer can measure. The shelf keeps the
+/// list-level modifiers (insets, swipe) at its own call site.
+struct ArchivedChatRow: View {
+    let chat: Chat
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                if let harness = chat.config?.harness {
+                    HarnessBadge(harness: harness, size: 14, dimmed: true)
+                }
+                // The resting marker takes this title's line box (§4) — but
+                // not the 0.55 dim beside it.
+                Text(chat.displayTitle)
+                    .font(Theme.sans(13))
+                    .foregroundStyle(Theme.text.opacity(0.55))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .noteMarkerTitle()
+                Text(relativeTime(chat.lastMessageAt ?? chat.createdAt))
+                    .font(Theme.sans(11))
+                    .foregroundStyle(Theme.textMuted.opacity(0.55))
+                    .fixedSize()
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(PressWashButtonStyle())
+        .noteMarker(chat.note)
+        .noteValue(chat.note)
     }
 }
