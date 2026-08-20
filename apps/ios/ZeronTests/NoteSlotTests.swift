@@ -13,21 +13,20 @@ import XCTest
 
 // MARK: - Reading a painted colour back
 
-/// The sRGB channels a `Color` actually paints, 0..1.
-private func channels(_ color: Color) -> [Double] {
+/// What a `Color` actually paints: sRGB channels 0..1, and its alpha.
+private func painted(_ color: Color) -> (rgb: [Double], alpha: Double) {
     var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
     UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a)
-    return [Double(r), Double(g), Double(b)]
+    return ([Double(r), Double(g), Double(b)], Double(a))
 }
+
+/// The sRGB channels a `Color` actually paints, 0..1.
+private func channels(_ color: Color) -> [Double] { painted(color).rgb }
 
 /// The alpha a `Color` actually paints — the wash tests read their alpha from
 /// `Theme` rather than hardcoding 0.06 and 0.10, so a re-tune of the wash
 /// moves the test with it.
-private func alpha(_ color: Color) -> Double {
-    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-    UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a)
-    return Double(a)
-}
+private func alpha(_ color: Color) -> Double { painted(color).alpha }
 
 // MARK: - Colour arithmetic, ported for the tests only
 
@@ -193,11 +192,14 @@ final class NoteSlotPaletteTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(onSelected, 3.0)
 
         // §3's table. The two wash rows are marked `≈` there because they were
-        // re-derived rather than measured; this arithmetic resolves them to
-        // 5.18 and 4.62, inside the `≈`. The accuracy is what carries that.
+        // re-derived rather than measured, and §3 names THIS test as what pins
+        // them — so the numbers here are the ones of record. The arithmetic is
+        // deterministic, so all three pin at the same accuracy as test 12; a
+        // looser tolerance on the washes would only paper over the 0.02 the
+        // spec's estimate was out by. §3's rows are corrected to match.
         XCTAssertEqual(onPage, 5.88, accuracy: 0.01, "§3: worst on Theme.surface")
-        XCTAssertEqual(onPressed, 5.20, accuracy: 0.05, "§3: worst on the pressed wash")
-        XCTAssertEqual(onSelected, 4.64, accuracy: 0.05, "§3: worst on the selected wash")
+        XCTAssertEqual(onPressed, 5.18, accuracy: 0.01, "§3: worst on the pressed wash")
+        XCTAssertEqual(onSelected, 4.62, accuracy: 0.01, "§3: worst on the selected wash")
     }
 
     /// Test 12. The closest pair stays far enough apart to be told from each

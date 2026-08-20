@@ -227,8 +227,8 @@ gamma space, which is what CoreAnimation does over an opaque sRGB surface.
 | --- | --- | --- | --- |
 | `Theme.surface` `#0d0d0d` - **the real page colour** | **5.88** | 6.61 | yes |
 | `Theme.bg` `#060606` - the app root behind the list | 6.13 | 6.89 | yes |
-| pressed row, `elementHover` white 0.06 over the page | **≈ 5.20** | ≈ 5.85 | yes |
-| selected row, `elementActive` white 0.10 over the page | **≈ 4.64** | ≈ 5.22 | yes |
+| pressed row, `elementHover` white 0.06 over the page | **5.18** | 5.82 | yes |
+| selected row, `elementActive` white 0.10 over the page | **4.62** | 5.20 | yes |
 | archived shelf marker dimmed to 55% | 2.51 | 2.72 | **no - and §4 does not dim it** |
 
 **One correction, made while writing this spec and carried as a decision.** The prototype's wash
@@ -236,9 +236,11 @@ rows composited over `Theme.bg` `#060606` and reported 5.53 and 4.99. The Sessio
 archived shelf actually paint on `Theme.surface` `#0d0d0d`
 (`apps/ios/Zeron/Views/HomeView.swift:41`, `apps/ios/Zeron/Views/SpaceView.swift:48`); `Theme.bg`
 (`apps/ios/Zeron/Theme/Theme.swift:14`) is the app root behind them. The two wash numbers above
-are **re-derived by the same arithmetic and are not prototype measurements** - they are marked
-`≈` for that reason, and §9's contrast test is what pins them. **No verdict moves**: the worst case
-falls from 4.99 to about 4.64 and still clears 3:1 with 1.64 to spare.
+were first **re-derived by the same arithmetic rather than measured**, and were carried as
+`≈ 5.20` and `≈ 4.64` until §9's contrast test - which this section named as what pins them -
+resolved them to **5.18** and **4.62**. The table carries the pinned values, and the test asserts
+them at the same accuracy as every other number here. **No verdict moves**: the worst case falls
+from 4.99 to 4.62 and still clears 3:1 with 1.62 to spare.
 
 **The desktop's two contrast-driven known limits do not carry.** Every surface the marker paints
 on clears 3:1, and the reason is structural rather than lucky: this app's page is darker than

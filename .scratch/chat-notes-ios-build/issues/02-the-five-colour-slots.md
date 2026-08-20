@@ -49,4 +49,5 @@ never touches the model.)
       against both washes composited over it; the closest-pair OKLab ΔE is at or above 0.12; and
       `allCases` is in wheel order, which is the Note Editor's row order.
 - [ ] The contrast test asserts against the **real page colour**, not `Theme.bg`, and its output
-      pins §3's two derived numbers (pressed ≈ 5.20, selected ≈ 4.64).
+      pins §3's two derived numbers. §3 carried them as `≈ 5.20` and `≈ 4.64`; the test
+      resolves them to **5.18** and **4.62**, and §3's table is corrected to match.
