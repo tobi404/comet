@@ -298,6 +298,11 @@ struct ChatRow: View {
     /// The row's own title line box — the resting marker's height rule (§4).
     @State private var titleLine: CGFloat = 0
 
+    /// The Note Editor. The row owns it because its two openers sit on two
+    /// different views of this row: the long press on the whole row, and the
+    /// custom action on the row's own element (§8).
+    @State private var editingNote = false
+
     private var subline: Color { Theme.textMuted.opacity(0.5) }
 
     /// The list's row insets, shared with `SpaceView` so both session lists
@@ -313,6 +318,10 @@ struct ChatRow: View {
             }
             .buttonStyle(PressWashButtonStyle())
             .restingNote(chat.note, titleLine: titleLine)
+            // On the Button and not on the row: the badge below is a second
+            // accessibility element, and an action on the row would land on
+            // it too (§8).
+            .chatNoteActions(chat, editing: $editingNote)
             if let pullRequest {
                 PullRequestBadge(summary: pullRequest)
                     .padding(.trailing, 8)
@@ -322,7 +331,7 @@ struct ChatRow: View {
         }
         // The long press sits on the whole row and not on the Button, so a
         // bare row lifts everything it draws — the badge included (§5, §6).
-        .chatNoteMenu(chat, location: location)
+        .chatNoteMenu(chat, location: location, editing: $editingNote)
     }
 
     private func content(indicator: ChatIndicator, reservesPullRequest: Bool) -> some View {

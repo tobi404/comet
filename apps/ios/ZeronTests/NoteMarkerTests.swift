@@ -243,6 +243,70 @@ final class NoteRowValueTests: XCTestCase {
     }
 }
 
+// MARK: - The row's custom actions (§8)
+
+@MainActor
+final class NoteRowActionTests: XCTestCase {
+    /// The heard order is `Edit note, Clear note` on a noted row and
+    /// `Add note` on a bare one. The labels carry no ellipsis: the menu's
+    /// "Edit note…" is a pointer convention, and a screen reader speaks the
+    /// three dots.
+    ///
+    /// The row's archive verb is not in this list. It comes from the trailing
+    /// swipe, the platform puts it after everything declared, and it is not
+    /// orderable against these — so it cannot be asserted here without
+    /// restating the swipe's own label. It is measured instead, below.
+    func testTheHeardOrderIsEditThenClear() {
+        XCTAssertEqual(chatNoteActions(hasNote: true).map(\.title), ["Edit note", "Clear note"])
+        XCTAssertEqual(chatNoteActions(hasNote: false).map(\.title), ["Add note"])
+    }
+
+    /// **Guard: the declaration is the reverse of the heard order.**
+    /// `.accessibilityActions` presents the reverse of what is declared, so
+    /// the row declares `Clear note, Edit note` to be heard the other way
+    /// round. It compiles and runs either way; only VoiceOver tells them
+    /// apart. A future reader who "fixes" the reversal breaks this test.
+    func testTheDeclaredOrderIsTheReverseOfTheHeardOrder() {
+        XCTAssertEqual(chatNoteDeclaredActions(hasNote: true),
+                       chatNoteActions(hasNote: true).reversed())
+        XCTAssertEqual(chatNoteDeclaredActions(hasNote: true).map(\.title),
+                       ["Clear note", "Edit note"])
+    }
+
+    /// The three action shapes, as AXe dumped them off a running build. The
+    /// archive verb is the swipe's own, and it lands last because the platform
+    /// put it there, not because it was declared there.
+    ///
+    /// ```
+    /// noted session row  ['Edit note', 'Clear note', 'Archive']
+    /// bare session row   ['Add note', 'Archive']
+    /// noted shelf row    ['Edit note', 'Clear note', 'Unarchive']
+    /// bare shelf row     ['Add note', 'Unarchive']
+    /// PullRequestBadge   ['Archive']
+    /// ```
+    ///
+    /// The badge's lone `Archive` is the List's own, on a second element
+    /// inside the same cell. The note actions are not on it because they are
+    /// declared on the row's element and not on the row — see
+    /// `View.chatNoteActions`, which records what the leak looked like.
+    ///
+    /// What is assertable here is that each action does the menu item's own
+    /// act: Clear goes through `AppModel.clearChatNote` and Archive through
+    /// `AppModel.archive` / `unarchive`, which is test 37's pair. Add and Edit
+    /// open the Note Editor, which is one `@State` shared with the menu — a
+    /// second sheet would be a second source of truth.
+    func testEachActionDoesItsMenuItemsOwnAct() {
+        let model = demoModel()
+        let noted = model.overviewChats.first { $0.note != nil }!
+
+        model.clearChatNote(chatId: noted.id)
+        XCTAssertNil(model.overviewChats.first { $0.id == noted.id }!.note)
+
+        model.archive(chatId: noted.id)
+        XCTAssertTrue(model.archivedChats().contains { $0.id == noted.id })
+    }
+}
+
 // MARK: - The list's order (§4)
 
 final class NoteSortOrderTests: XCTestCase {

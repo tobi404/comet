@@ -192,6 +192,10 @@ struct ArchivedChatRow: View {
     /// The row's own title line box — the resting marker's height rule (§4).
     @State private var titleLine: CGFloat = 0
 
+    /// The Note Editor, opened by the long press and by the row's custom
+    /// action alike (§8). Owned here, as on the session row.
+    @State private var editingNote = false
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 10) {
@@ -217,8 +221,12 @@ struct ArchivedChatRow: View {
         }
         .buttonStyle(PressWashButtonStyle())
         .restingNote(chat.note, titleLine: titleLine)
+        // The shelf row has no second element under it, but the actions go on
+        // the Button here too — one placement on both shapes, or a badge added
+        // to this row later inherits them (§8).
+        .chatNoteActions(chat, editing: $editingNote)
         // One mechanism on both row shapes: the 36pt row opens the same card
         // from the same gesture, with no degrade (§5, test 27).
-        .chatNoteMenu(chat, location: location)
+        .chatNoteMenu(chat, location: location, editing: $editingNote)
     }
 }

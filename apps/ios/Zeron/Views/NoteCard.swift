@@ -450,6 +450,58 @@ struct VeiledNoteCard: View {
     }
 }
 
+// MARK: - The menu's items as custom actions (§8)
+
+/// One of the note items the long-press menu carries, mirrored onto the row as
+/// a custom accessibility action.
+///
+/// **The actions exist because the menu is unreachable, not beside it.** A
+/// long press is not a VoiceOver gesture, and `.contextMenu` adds nothing to
+/// the accessibility tree — the tree was dumped with the menu attached and
+/// without it and the two are identical. So the row carries the items itself.
+///
+/// **The titles carry no ellipsis**, where the menu's labels do. The three
+/// dots are a pointer convention meaning "this opens something"; a screen
+/// reader speaks them. The two sets of strings look alike and are not the
+/// same string — a later pass that deduplicates them makes the row say
+/// "Edit note dot dot dot".
+enum ChatNoteAction: Hashable {
+    case add
+    case edit
+    case clear
+
+    var title: String {
+        switch self {
+        case .add: "Add note"
+        case .edit: "Edit note"
+        case .clear: "Clear note"
+        }
+    }
+}
+
+/// The row's note actions **in the order they are heard**.
+///
+/// The archive verb is not here. It comes from the trailing swipe, the
+/// platform appends it after everything declared, and it is not orderable
+/// against these — the rotor's order is the platform's, not ours (§10).
+func chatNoteActions(hasNote: Bool) -> [ChatNoteAction] {
+    hasNote ? [.edit, .clear] : [.add]
+}
+
+/// The same actions **in the order they must be declared**, which is the
+/// reverse.
+///
+/// **Do not "fix" this.** `.accessibilityActions` presents the reverse of the
+/// declared order. It compiles and it runs either way, and only VoiceOver
+/// tells the two apart — a trap of the same shape as the text delegate's
+/// Swift label. The two reachable orders are `Clear note, Edit note, Archive`
+/// and `Edit note, Clear note, Archive`; the second is the one shipped. Its
+/// `Archive` is last because the platform put it there, not because it was
+/// declared last — "destructive last" was built and found unreachable.
+func chatNoteDeclaredActions(hasNote: Bool) -> [ChatNoteAction] {
+    chatNoteActions(hasNote: hasNote).reversed()
+}
+
 // MARK: - The long press, on both row shapes
 
 extension View {
@@ -463,8 +515,57 @@ extension View {
     ///
     /// The trailing swipe is untouched: a long press and a horizontal drag are
     /// different gestures and iOS tells them apart (test 37).
-    func chatNoteMenu(_ chat: Chat, location: String) -> some View {
-        modifier(ChatNoteMenu(chat: chat, location: location))
+    func chatNoteMenu(_ chat: Chat, location: String, editing: Binding<Bool>) -> some View {
+        modifier(ChatNoteMenu(chat: chat, location: location, editing: editing))
+    }
+
+    /// The menu's note items, mirrored onto the row as custom accessibility
+    /// actions (§8). The rotor's only way in — see `ChatNoteAction`.
+    ///
+    /// **Apply it to the row's own element, not to the whole row**, which is
+    /// the one place it differs from `chatNoteMenu` above. An accessibility
+    /// action declared on a container reaches every element under it, and the
+    /// session row has a second one: `PullRequestBadge`. Measured — with this
+    /// on the row the badge answered `custom_actions=['Edit note', 'Clear
+    /// note', 'Archive']` as well, which offers to clear a note from a thing
+    /// that is not the note's row.
+    ///
+    /// `editing` is the row's, shared with the menu, so both open one Note
+    /// Editor. Two sheets would be two sources of truth for one act.
+    func chatNoteActions(_ chat: Chat, editing: Binding<Bool>) -> some View {
+        modifier(ChatNoteActions(chat: chat, editing: editing))
+    }
+}
+
+private struct ChatNoteActions: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let chat: Chat
+    @Binding var editing: Bool
+
+    func body(content: Content) -> some View {
+        content.accessibilityActions { actions }
+    }
+
+    /// Declared in the reverse of the heard order — see
+    /// `chatNoteDeclaredActions`, which is where the why lives.
+    ///
+    /// **Plain buttons, no `role`.** The menu's Clear note is destructive and
+    /// this one is not: a role is a trait, and a trait is the kind of thing
+    /// that re-orders the rotor silently. The declaration measured reachable
+    /// is the one shipped.
+    @ViewBuilder private var actions: some View {
+        ForEach(chatNoteDeclaredActions(hasNote: chat.note != nil), id: \.self) { action in
+            Button(action.title) { perform(action) }
+        }
+    }
+
+    /// Each action does its menu item's own act, never a second one that could
+    /// drift from it.
+    private func perform(_ action: ChatNoteAction) {
+        switch action {
+        case .add, .edit: editing = true
+        case .clear: model.clearChatNote(chatId: chat.id)
+        }
     }
 }
 
@@ -474,9 +575,10 @@ private struct ChatNoteMenu: ViewModifier {
     let chat: Chat
     let location: String
 
-    /// The Note Editor, opened from the menu's first item and from nowhere
-    /// else. Per row, because the menu is.
-    @State private var editing = false
+    /// The Note Editor, opened from the menu's first item and from the row's
+    /// matching custom action, and from nowhere else. The row owns it, because
+    /// the two openers sit on two different views of the same row.
+    @Binding var editing: Bool
 
     /// The card's numbers, resolved while the row is at rest. The press reads
     /// them; it does not compute them.
