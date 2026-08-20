@@ -95,10 +95,7 @@ enum NoteCardMetrics {
     /// The category is a PARAMETER and never read from the process, so a test
     /// can ask for a size the simulator is not set to.
     static func scaledFont(_ size: CGFloat, category: UIContentSizeCategory) -> UIFont {
-        UIFontMetrics(forTextStyle: .body).scaledFont(
-            for: Theme.sansUI(size),
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: category)
-        )
+        Theme.sansScaledUI(size, category: category)
     }
 
     /// The clamp as the `Text` has to receive it.

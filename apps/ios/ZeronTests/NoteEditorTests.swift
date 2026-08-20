@@ -337,15 +337,36 @@ final class NoteEditorTests: XCTestCase {
 
     // MARK: - 36. The detent
 
-    /// **`detent = content height + 60`**, where 60 is the nav bar, the
-    /// grabber above it, and the room under the content. Too small scrolls a
-    /// sheet that should not scroll; too large draws the void `.medium` draws.
-    func testTheDetentEqualsContentHeightPlusChrome() {
-        for height in [NoteEditorMetrics.floorHeight, NoteEditorMetrics.ceilingHeight] {
-            XCTAssertEqual(NoteEditorMetrics.detentHeight(fieldHeight: height),
-                           NoteEditorMetrics.contentHeight(fieldHeight: height)
-                               + NoteEditorMetrics.chrome)
+    /// **`detent = content height + chrome`**, where the chrome is the nav
+    /// bar, the grabber above it, and the room under the content. Too small
+    /// scrolls a sheet that should not scroll; too large draws the void
+    /// `.medium` draws.
+    ///
+    /// Both failure modes are a gap between the detent and the content, so
+    /// this pins the gap: it is the chrome exactly, at both ends of the
+    /// field's range and everywhere between, and the chrome is the swept
+    /// number and not §7's carried 60. Asserting `detentHeight` against its
+    /// own definition would restate the code and could not fail.
+    func testTheDetentIsTheContentPlusTheSweptChrome() {
+        XCTAssertEqual(NoteEditorMetrics.chrome, 41,
+                       "swept on an iPhone 17 Pro: 60 leaves 17.5pt of void, 20 falls short")
+
+        let range = [NoteEditorMetrics.floorHeight,
+                     (NoteEditorMetrics.floorHeight + NoteEditorMetrics.ceilingHeight) / 2,
+                     NoteEditorMetrics.ceilingHeight]
+        for height in range {
+            let gap = NoteEditorMetrics.detentHeight(fieldHeight: height)
+                - NoteEditorMetrics.contentHeight(fieldHeight: height)
+            XCTAssertEqual(gap, 41, accuracy: 0.001)
         }
+
+        // And it grows with the field, point for point — a detent that stopped
+        // tracking would clip the note or draw container under the slot row.
+        XCTAssertEqual(
+            NoteEditorMetrics.detentHeight(fieldHeight: NoteEditorMetrics.ceilingHeight)
+                - NoteEditorMetrics.detentHeight(fieldHeight: NoteEditorMetrics.floorHeight),
+            NoteEditorMetrics.ceilingHeight - NoteEditorMetrics.floorHeight,
+            accuracy: 0.001)
     }
 
     /// The content is padding, field, gap and slot row — **field → slot row
@@ -372,10 +393,38 @@ final class NoteEditorTests: XCTestCase {
     /// **`sky` becomes "Blue"** — a storage token is not a word a person uses
     /// for a colour they are picking. **This does not touch the wire**: the id
     /// stays `sky`.
+    /// **The role is spoken because the control has no other name.** Five bare
+    /// colour words in a sheet say nothing about what choosing one does.
     func testTheSlotsAreSpokenAsColourWordsAndSkyIsBlue() {
-        XCTAssertEqual(NoteSlot.allCases.map(\.spokenName),
-                       ["Rose", "Amber", "Green", "Blue", "Violet"])
-        XCTAssertEqual(NoteSlot.sky.rawValue, "sky")
+        XCTAssertEqual(NoteSlot.allCases.map(\.spokenLabel),
+                       ["Rose note colour", "Amber note colour", "Green note colour",
+                        "Blue note colour", "Violet note colour"])
+        XCTAssertEqual(NoteSlot.sky.rawValue, "sky", "the wire id is untouched")
+    }
+
+    /// **The field's name.** Without it VoiceOver reads the note text and then
+    /// "text field" — a named control instead of an anonymous one.
+    func testTheFieldIsNamedNote() {
+        XCTAssertEqual(NoteUITextView().accessibilityLabel, "Note")
+    }
+
+    /// **The ring gains an explicit `Selected` value**, because
+    /// `.accessibilityAddTraits(.isSelected)` does not appear in any tree this
+    /// effort could produce, so the ring's selected state would otherwise be
+    /// claimed by nothing.
+    func testTheChosenSlotCarriesAnExplicitSelectedValue() {
+        XCTAssertEqual(NoteSlotRow.accessibilityValue(selected: true), "Selected")
+        XCTAssertEqual(NoteSlotRow.accessibilityValue(selected: false), "")
+    }
+
+    /// An id no case matches rings `rose`, which is the same answer
+    /// `NoteSlot.color(for:)` paints the row's marker with. The two must not
+    /// disagree: a sheet ringing one slot over a row marked another reads as
+    /// the phone being broken.
+    func testAnUnknownStoredIdRingsTheSlotTheRowPaints() {
+        XCTAssertEqual(NoteSlot.slot(for: "chartreuse"), .rose)
+        XCTAssertEqual(NoteSlot.slot(for: ""), .rose)
+        XCTAssertEqual(NoteSlot.slot(for: "violet"), .violet)
     }
 
     /// The ring is held one cell out from the **dot**, not from the 44pt

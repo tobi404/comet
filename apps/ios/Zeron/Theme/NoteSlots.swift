@@ -32,6 +32,27 @@ enum NoteSlot: String, CaseIterable {
     /// The slot a new note starts on, and the fallback for an unknown id.
     static let fallback: NoteSlot = .rose
 
+    /// What VoiceOver calls this slot, with the role the control has no other
+    /// name for (§8).
+    ///
+    /// **`sky` becomes "Blue".** It is a storage token, not a word a person
+    /// uses for a colour they are picking; the other four are ordinary colour
+    /// words and survive unchanged. **This does not touch the wire**: the id
+    /// stays `sky`.
+    ///
+    /// It lives beside `hue` on purpose. Both are the slot's own vocabulary,
+    /// so a sixth slot is one file to edit rather than two.
+    var spokenLabel: String {
+        let name = switch self {
+        case .rose: "Rose"
+        case .amber: "Amber"
+        case .green: "Green"
+        case .sky: "Blue"
+        case .violet: "Violet"
+        }
+        return "\(name) note colour"
+    }
+
     /// Resolved at paint time through the same `oklch()` helper every other
     /// colour in the app goes through. The reference hexes in §3 are reference
     /// only — a stored hex could not follow a re-tune, which is the same
@@ -47,7 +68,13 @@ enum NoteSlot: String, CaseIterable {
     /// being honest. Both apps wrong in the same direction is the cheaper
     /// failure. The cost is named in §10, limit 14.
     static func color(for id: String) -> Color {
-        (NoteSlot(rawValue: id) ?? .fallback).color
+        slot(for: id).color
+    }
+
+    /// The one place an unknown id is answered, so the Note Editor rings the
+    /// slot the row paints rather than deciding for itself.
+    static func slot(for id: String) -> NoteSlot {
+        NoteSlot(rawValue: id) ?? .fallback
     }
 }
 

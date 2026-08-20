@@ -94,10 +94,7 @@ enum NoteEditorMetrics {
     /// are fixed at what their line counts occupy here, whatever the user's
     /// text size is (§8's one rule); the painted font scales, these do not.
     static var measuringFont: UIFont {
-        UIFontMetrics(forTextStyle: .body).scaledFont(
-            for: Theme.sansUI(fontSize),
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        )
+        Theme.sansScaledUI(fontSize, category: .large)
     }
 
     /// **The floor and ceiling must be MEASURED, not multiplied.** This lays
@@ -352,7 +349,11 @@ struct NoteTextField: UIViewRepresentable {
         uiView: NoteUITextView,
         context: Context
     ) -> CGSize? {
-        let width = proposal.replacingUnspecifiedDimensions().width
+        // **An unspecified width is refused rather than substituted.**
+        // `replacingUnspecifiedDimensions()` hands back 10pt, which measures a
+        // long note as dozens of lines and reports the ceiling for that pass.
+        // Returning nil lets SwiftUI size the view its own way instead.
+        guard let width = proposal.width else { return nil }
         let content = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)
         ).height
@@ -452,28 +453,10 @@ final class NoteUITextView: UITextView {
 
 // MARK: - The slot row
 
-extension NoteSlot {
-    /// The word a person uses for the colour they are picking.
-    ///
-    /// **`sky` becomes "Blue".** It is a storage token, not a colour word, and
-    /// five bare colour words would say nothing about what choosing one does —
-    /// hence the role in the label too. **This does not touch the wire**: the
-    /// id stays `sky` (§8).
-    var spokenName: String {
-        switch self {
-        case .rose: "Rose"
-        case .amber: "Amber"
-        case .green: "Green"
-        case .sky: "Blue"
-        case .violet: "Violet"
-        }
-    }
-}
-
 /// Five dots and the counter, on one row.
 ///
-/// **The dots do not scale with Dynamic Type and should not.** A colour
-/// swatch is not text.
+/// **The dots do not scale with Dynamic Type and should not.** A Colour Slot
+/// is a colour, and a colour is not text.
 struct NoteSlotRow: View {
     @Binding var selection: NoteSlot
     let count: Int
@@ -523,12 +506,22 @@ struct NoteSlotRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(slot.spokenName) note colour")
+        .accessibilityLabel(slot.spokenLabel)
         // **The ring gains an explicit `Selected` value.**
         // `.accessibilityAddTraits(.isSelected)` does not appear in any tree
         // this effort could produce, so the ring's selected state would
         // otherwise be claimed by nothing (§8).
-        .accessibilityValue(selected ? "Selected" : "")
+        .accessibilityValue(Self.accessibilityValue(selected: selected))
+    }
+
+    /// **The ring gains an explicit `Selected` value.**
+    /// `.accessibilityAddTraits(.isSelected)` does not appear in any tree this
+    /// effort could produce, so the ring's selected state would otherwise be
+    /// claimed by nothing (§8). A named function rather than an inline
+    /// ternary, because the string is the only thing that says the ring means
+    /// anything and nothing else can assert it.
+    static func accessibilityValue(selected: Bool) -> String {
+        selected ? "Selected" : ""
     }
 
     /// **The desktop's rule ports verbatim: hidden until 240,
@@ -571,8 +564,7 @@ struct NoteEditorSheet: View {
         // **A new note starts on `rose`, already selected; editing shows the
         // stored slot ringed.** An id no case matches rings `rose` too, which
         // is the same answer `NoteSlot.color(for:)` paints with.
-        _slot = State(initialValue: chat.note.flatMap { NoteSlot(rawValue: $0.color) }
-                        ?? NoteSlot.fallback)
+        _slot = State(initialValue: NoteSlot.slot(for: chat.note?.color ?? ""))
         _fieldHeight = State(initialValue: NoteEditorMetrics.floorHeight)
     }
 
@@ -613,6 +605,15 @@ struct NoteEditorSheet: View {
     /// is the feedback, and the app has no success-haptic anywhere for this to
     /// match. Blank text clears, which is what makes Save and "Clear note" the
     /// same act rather than two.
+    /// **`dismiss()` is called inline, and deferring it one run loop was
+    /// built and refused.** Return reaches here from inside
+    /// `shouldChangeTextInRanges`, so calling it there looks like tearing the
+    /// first responder down mid-callback — a fair thing to raise, and it was.
+    /// `DispatchQueue.main.async { dismiss() }` was tried on an iPhone 17 Pro:
+    /// the note saves, the sheet does NOT close, and it snaps to full screen
+    /// with the text still in it. The `DismissAction` is stale by the time the
+    /// block runs. The inline call closes cleanly on both paths and on the
+    /// swipe, so it stands.
     private func save() {
         model.setChatNote(chatId: chat.id, text: text, color: slot.rawValue)
         dismiss()

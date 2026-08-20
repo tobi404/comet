@@ -99,6 +99,22 @@ extension Theme {
         return UIFont(descriptor: descriptor, size: size)
     }
 
+    /// `sansUI`, scaled for a content size category.
+    ///
+    /// **The category is a PARAMETER and never read from the process**, so a
+    /// test can ask for a size the simulator is not set to, and a clamp fixed
+    /// at the default size can measure there while the paint scales (§8's one
+    /// rule). Both the Note Card's forced height and the Note Editor field's
+    /// floor and ceiling come through here; measuring with a raw `UIFont`
+    /// while painting with a scaled one gives a default-size height whatever
+    /// the user's text size is, and nothing warns.
+    static func sansScaledUI(_ size: CGFloat, category: UIContentSizeCategory) -> UIFont {
+        UIFontMetrics(forTextStyle: .body).scaledFont(
+            for: sansUI(size),
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: category)
+        )
+    }
+
     static func monoUI(_ size: CGFloat) -> UIFont {
         UIFont(name: fontMonoName, size: size)
             ?? .monospacedSystemFont(ofSize: size, weight: .regular)
