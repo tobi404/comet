@@ -477,11 +477,19 @@ private struct ChatNoteMenu: ViewModifier {
     let chat: Chat
     let location: String
 
+    /// The Note Editor, opened from the menu's first item and from nowhere
+    /// else. Per row, because the menu is.
+    @State private var editing = false
+
     /// The card's numbers, resolved while the row is at rest. The press reads
     /// them; it does not compute them.
     private var category: UIContentSizeCategory { UIContentSizeCategory(dynamicTypeSize) }
 
-    @ViewBuilder func body(content: Content) -> some View {
+    func body(content: Content) -> some View {
+        menu(content).sheet(isPresented: $editing) { NoteEditorSheet(chat: chat) }
+    }
+
+    @ViewBuilder private func menu(_ content: Content) -> some View {
         if let note = chat.note {
             content.contextMenu {
                 items(hasNote: true)
@@ -505,6 +513,15 @@ private struct ChatNoteMenu: ViewModifier {
     }
 
     @ViewBuilder private func items(hasNote: Bool) -> some View {
+        // **The label changes with state**, carried from the desktop, and that
+        // reasoning gets stronger on the phone: on a row with no note, this
+        // menu item is the only thing on screen that says a note is possible.
+        Button {
+            editing = true
+        } label: {
+            Label(hasNote ? "Edit note…" : "Add note…", systemImage: "square.and.pencil")
+        }
+
         // **Archive earns its place.** A menu holding one item under a
         // full-width card reads as an accident. Archive is what the row
         // already knows how to do and what the trailing swipe already does, so
