@@ -226,6 +226,22 @@ async fn config_options_apply_requested_model_and_effort() {
     );
     assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
 }
+
+#[tokio::test]
+async fn resumed_first_class_model_is_switched_before_prompt() {
+    let (controls, _steer, _token) = controls();
+    let mut req = request("scenario:model-api");
+    req.resume = Some("existing-grok-session".into());
+    let events = run_to_end(&harness(), req, controls).await;
+    assert!(
+        events.contains(&AgentEvent::TextDelta {
+            text: "model switched".into()
+        }),
+        "{events:?}"
+    );
+    assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)]);
+}
+
 #[tokio::test]
 async fn permission_requests_auto_accept_the_preferred_allow_option() {
     let (controls, _steer, _token) = controls();
@@ -660,7 +676,18 @@ fn hermes_and_pi_descriptor_surfaces_match_registry_expectations() {
     assert_eq!(opencode.display_name(), "OpenCode");
     assert!(opencode.supports_steering());
     assert_eq!(opencode.steering_mode(), SteeringMode::TurnBoundary);
-    assert!(opencode.reasoning_levels().is_empty());
+    // Effort rides opencode's model variants (the session's `effort` config
+    // option, category thought_level); variant-less models skip the set.
+    assert_eq!(
+        opencode.reasoning_levels(),
+        &[
+            zeron_proto::ReasoningLevel::Low,
+            zeron_proto::ReasoningLevel::Medium,
+            zeron_proto::ReasoningLevel::High,
+            zeron_proto::ReasoningLevel::XHigh,
+            zeron_proto::ReasoningLevel::Max,
+        ]
+    );
 
     let pi = AcpHarness::pi();
     assert_eq!(pi.id(), HarnessId::Pi);
