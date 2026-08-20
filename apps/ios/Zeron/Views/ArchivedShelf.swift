@@ -193,7 +193,7 @@ struct ArchivedChatRow: View {
     @State private var titleLine: CGFloat = 0
 
     /// The Note Editor, opened by the long press and by the row's custom
-    /// action alike (§8). Owned here, as on the session row.
+    /// action alike (§8). Owned here, as on the chat row.
     @State private var editingNote = false
 
     var body: some View {

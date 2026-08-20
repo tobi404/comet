@@ -257,8 +257,9 @@ final class NoteRowActionTests: XCTestCase {
     /// orderable against these — so it cannot be asserted here without
     /// restating the swipe's own label. It is measured instead, below.
     func testTheHeardOrderIsEditThenClear() {
-        XCTAssertEqual(chatNoteActions(hasNote: true).map(\.title), ["Edit note", "Clear note"])
-        XCTAssertEqual(chatNoteActions(hasNote: false).map(\.title), ["Add note"])
+        XCTAssertEqual(chatNoteHeardActions(hasNote: true).map(\.title),
+                       ["Edit note", "Clear note"])
+        XCTAssertEqual(chatNoteHeardActions(hasNote: false).map(\.title), ["Add note"])
     }
 
     /// **Guard: the declaration is the reverse of the heard order.**
@@ -268,42 +269,66 @@ final class NoteRowActionTests: XCTestCase {
     /// apart. A future reader who "fixes" the reversal breaks this test.
     func testTheDeclaredOrderIsTheReverseOfTheHeardOrder() {
         XCTAssertEqual(chatNoteDeclaredActions(hasNote: true),
-                       chatNoteActions(hasNote: true).reversed())
+                       chatNoteHeardActions(hasNote: true).reversed())
         XCTAssertEqual(chatNoteDeclaredActions(hasNote: true).map(\.title),
                        ["Clear note", "Edit note"])
     }
 
-    /// The three action shapes, as AXe dumped them off a running build. The
-    /// archive verb is the swipe's own, and it lands last because the platform
-    /// put it there, not because it was declared there.
+    /// Each action does its menu item's own act. This drives
+    /// `ChatNoteAction.perform` itself, which is the single copy of the act
+    /// the menu's item and the row's action both call — the row and the menu
+    /// cannot drift apart, because there is nothing to drift.
     ///
-    /// ```
-    /// noted session row  ['Edit note', 'Clear note', 'Archive']
-    /// bare session row   ['Add note', 'Archive']
-    /// noted shelf row    ['Edit note', 'Clear note', 'Unarchive']
-    /// bare shelf row     ['Add note', 'Unarchive']
-    /// PullRequestBadge   ['Archive']
-    /// ```
-    ///
-    /// The badge's lone `Archive` is the List's own, on a second element
-    /// inside the same cell. The note actions are not on it because they are
-    /// declared on the row's element and not on the row — see
-    /// `View.chatNoteActions`, which records what the leak looked like.
-    ///
-    /// What is assertable here is that each action does the menu item's own
-    /// act: Clear goes through `AppModel.clearChatNote` and Archive through
-    /// `AppModel.archive` / `unarchive`, which is test 37's pair. Add and Edit
-    /// open the Note Editor, which is one `@State` shared with the menu — a
-    /// second sheet would be a second source of truth.
+    /// Archive is not here. It is the swipe's own act, and test 37 owns it.
     func testEachActionDoesItsMenuItemsOwnAct() {
         let model = demoModel()
         let noted = model.overviewChats.first { $0.note != nil }!
+        var editing = false
+        let binding = Binding(get: { editing }, set: { editing = $0 })
 
-        model.clearChatNote(chatId: noted.id)
+        ChatNoteAction.edit.perform(on: noted, model: model, editing: binding)
+        XCTAssertTrue(editing)
+        XCTAssertNotNil(model.overviewChats.first { $0.id == noted.id }!.note)
+
+        editing = false
+        ChatNoteAction.add.perform(on: noted, model: model, editing: binding)
+        XCTAssertTrue(editing)
+
+        editing = false
+        ChatNoteAction.clear.perform(on: noted, model: model, editing: binding)
         XCTAssertNil(model.overviewChats.first { $0.id == noted.id }!.note)
+        // Clearing does not open the editor, and it asks for nothing first.
+        XCTAssertFalse(editing)
+    }
 
-        model.archive(chatId: noted.id)
-        XCTAssertTrue(model.archivedChats().contains { $0.id == noted.id })
+    /// The four row shapes, as AXe dumped them off a running build. The archive
+    /// verb lands last because the platform put it there, not because it was
+    /// declared there — it cannot be asserted in a unit test without restating
+    /// the swipe's own label, so it is recorded here as measured.
+    ///
+    /// ```
+    /// noted chat row    ['Edit note', 'Clear note', 'Archive']
+    /// bare chat row     ['Add note', 'Archive']
+    /// noted shelf row   ['Edit note', 'Clear note', 'Unarchive']
+    /// bare shelf row    ['Add note', 'Unarchive']
+    /// PullRequestBadge  ['Archive']
+    /// ```
+    ///
+    /// The badge's lone `Archive` is the List's own, on a second element inside
+    /// the same cell. The note actions are not on it because they are declared
+    /// on the row's element and not on the row — see `View.chatNoteActions`,
+    /// which records what the leak looked like.
+    ///
+    /// The rows kept their spoken value through all of it, which is the
+    /// assertion this test can make: `Note, <text>` on a noted row, and no
+    /// value at all on a bare one.
+    func testTheActionsDoNotMoveTheRowsSpokenValue() {
+        let model = demoModel()
+        let noted = model.overviewChats.first { $0.note != nil }!
+        let bare = model.overviewChats.first { $0.note == nil }!
+
+        XCTAssertEqual(noteSpokenValue(noted.note), "Note, " + noted.note!.text)
+        XCTAssertNil(noteSpokenValue(bare.note))
     }
 }
 

@@ -477,6 +477,22 @@ enum ChatNoteAction: Hashable {
         case .clear: "Clear note"
         }
     }
+
+    /// **The act, and the only copy of it.** The long-press menu's item and
+    /// the row's custom action both come through here, so the two cannot say
+    /// the same thing and do different things. The titles are the only part
+    /// that differs between them, and they differ on purpose.
+    @MainActor
+    func perform(on chat: Chat, model: AppModel, editing: Binding<Bool>) {
+        switch self {
+        case .add, .edit: editing.wrappedValue = true
+        case .clear:
+            // No confirmation: clearing here and saving blank text in the Note
+            // Editor produce the same stored result, so this is one act and
+            // not two (test 7).
+            model.clearChatNote(chatId: chat.id)
+        }
+    }
 }
 
 /// The row's note actions **in the order they are heard**.
@@ -484,7 +500,7 @@ enum ChatNoteAction: Hashable {
 /// The archive verb is not here. It comes from the trailing swipe, the
 /// platform appends it after everything declared, and it is not orderable
 /// against these — the rotor's order is the platform's, not ours (§10).
-func chatNoteActions(hasNote: Bool) -> [ChatNoteAction] {
+func chatNoteHeardActions(hasNote: Bool) -> [ChatNoteAction] {
     hasNote ? [.edit, .clear] : [.add]
 }
 
@@ -499,7 +515,7 @@ func chatNoteActions(hasNote: Bool) -> [ChatNoteAction] {
 /// `Archive` is last because the platform put it there, not because it was
 /// declared last — "destructive last" was built and found unreachable.
 func chatNoteDeclaredActions(hasNote: Bool) -> [ChatNoteAction] {
-    chatNoteActions(hasNote: hasNote).reversed()
+    chatNoteHeardActions(hasNote: hasNote).reversed()
 }
 
 // MARK: - The long press, on both row shapes
@@ -525,10 +541,10 @@ extension View {
     /// **Apply it to the row's own element, not to the whole row**, which is
     /// the one place it differs from `chatNoteMenu` above. An accessibility
     /// action declared on a container reaches every element under it, and the
-    /// session row has a second one: `PullRequestBadge`. Measured — with this
-    /// on the row the badge answered `custom_actions=['Edit note', 'Clear
-    /// note', 'Archive']` as well, which offers to clear a note from a thing
-    /// that is not the note's row.
+    /// chat row has a second one: `PullRequestBadge`. Measured — with this on
+    /// the row the badge answered `custom_actions=['Edit note', 'Clear note',
+    /// 'Archive']` as well, which offers to clear a note from a thing that is
+    /// not the note's row.
     ///
     /// `editing` is the row's, shared with the menu, so both open one Note
     /// Editor. Two sheets would be two sources of truth for one act.
@@ -555,16 +571,9 @@ private struct ChatNoteActions: ViewModifier {
     /// is the one shipped.
     @ViewBuilder private var actions: some View {
         ForEach(chatNoteDeclaredActions(hasNote: chat.note != nil), id: \.self) { action in
-            Button(action.title) { perform(action) }
-        }
-    }
-
-    /// Each action does its menu item's own act, never a second one that could
-    /// drift from it.
-    private func perform(_ action: ChatNoteAction) {
-        switch action {
-        case .add, .edit: editing = true
-        case .clear: model.clearChatNote(chatId: chat.id)
+            Button(action.title) {
+                action.perform(on: chat, model: model, editing: $editing)
+            }
         }
     }
 }
@@ -616,8 +625,12 @@ private struct ChatNoteMenu: ViewModifier {
         // reasoning gets stronger on the phone: on a row with no note, this
         // menu item is the only thing on screen that says a note is possible.
         Button {
-            editing = true
+            (hasNote ? ChatNoteAction.edit : .add).perform(on: chat, model: model,
+                                                           editing: $editing)
         } label: {
+            // The label carries the ellipsis and the spoken title does not —
+            // see `ChatNoteAction`, which is where that split is argued. The
+            // act under both is the same one.
             Label(hasNote ? "Edit note…" : "Add note…", systemImage: "square.and.pencil")
         }
 
@@ -645,7 +658,7 @@ private struct ChatNoteMenu: ViewModifier {
         // text produce the same stored result, so there is one act and not two.
         if hasNote {
             Button(role: .destructive) {
-                model.clearChatNote(chatId: chat.id)
+                ChatNoteAction.clear.perform(on: chat, model: model, editing: $editing)
             } label: {
                 Label("Clear note", systemImage: "trash")
             }
