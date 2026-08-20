@@ -95,7 +95,8 @@ the desktop sources cited in each file header.
 ### Writer discipline (what the phone writes)
 
 - Workspace doc: its own device row, chat creates (host = the space's owning
-  device), `archived`/`title`/`lastSeenAt` LWW sets, presence heartbeats.
+  device), `archived`/`title`/`lastSeenAt`/`config`/`note` LWW sets, presence
+  heartbeats.
 - Session docs: command ledger appends only (`run`/`steer`/`interrupt`/
   `respondInput`), with client-minted message ids for optimistic echo. The
   host writes all transcript entries and command outcomes.

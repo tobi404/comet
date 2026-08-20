@@ -17,7 +17,7 @@ import Observation
 /// It was written to match the desktop's own 671-character fixture and does
 /// not; it was counted rather than eyeballed, and every finding about the card
 /// holds at 779.
-let demoOverCapNote = """
+private let demoOverCapNote = """
 The room generation flip is the part nobody wrote down. When the host seeds a chat2 room it \
 stamps roomGen 2 on the chat row, and every peer that was already dialed into the s2 room has \
 to notice the stamp, tear the old dial down, and redial against the new room id — but the \
@@ -35,7 +35,7 @@ rather than guesses. Ask Wing about the desktop side.
 /// The spec calls this "the 118-character URL". This is that exact fixture,
 /// byte for byte — every measurement made against it holds — but it counts
 /// **115**, the same class of miscount the spec corrects for the note above.
-let demoUnbreakableURLNote =
+private let demoUnbreakableURLNote =
     "https://github.com/tobi404/comet/actions/runs/1874553902/jobs/2661104477?pr=173&check_suite_focus=true#step:14:2201"
 
 @MainActor
