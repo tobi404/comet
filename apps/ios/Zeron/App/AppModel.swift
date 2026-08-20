@@ -501,6 +501,41 @@ final class AppModel {
         workspace?.setChatConfig(chatId: chatId, config: config)
     }
 
+    /// Note Editor Save. Two user intents ride one wire op, so this and
+    /// `clearChatNote` are separate verbs over the single store function.
+    ///
+    /// `normalized` is called ABOVE the demo fork on purpose: demo mode is a
+    /// fork and not a mirror — a mutation reaches `DemoDataset` or
+    /// `WorkspaceStore`, never both — so a rule both paths need has to sit
+    /// above the branch. Blank text therefore CLEARS the note here rather
+    /// than doing nothing, which is what makes it the same act as "Clear
+    /// note" (§7's "nothing asks for confirmation" rests on that).
+    ///
+    /// The phone echoes the write for free: `doc.write` enqueues into the
+    /// pending overlay and `afterLocalWrite()` re-projects on the same run
+    /// loop, so the row repaints as the sheet closes. The desktop's "no
+    /// optimistic local echo" does not port, and nothing here waits or
+    /// reconciles.
+    func setChatNote(chatId: String, text: String, color: String) {
+        writeChatNote(chatId: chatId, note: ChatNote.normalized(text: text, color: color))
+    }
+
+    /// The menu's "Clear note". A note is cleared, never deleted: the whole
+    /// value goes and the Chat is untouched.
+    func clearChatNote(chatId: String) {
+        writeChatNote(chatId: chatId, note: nil)
+    }
+
+    private func writeChatNote(chatId: String, note: ChatNote?) {
+        if let demo {
+            if let ix = demo.chats.firstIndex(where: { $0.id == chatId }) {
+                demo.chats[ix].note = note
+            }
+            return
+        }
+        workspace?.setChatNote(chatId: chatId, note: note)
+    }
+
     func markSeen(chatId: String) {
         if let demo {
             if let ix = demo.chats.firstIndex(where: { $0.id == chatId }) {

@@ -6,6 +6,38 @@
 import Foundation
 import Observation
 
+// MARK: - Chat Note fixtures
+
+/// 779 characters — far past the 280 the Note Editor caps at. The cap is an
+/// authoring affordance and not a storage invariant: the phone writes registry
+/// rows directly and never passes the engine's Mutate RPC, so a longer note can
+/// arrive from any device. Every surface must tolerate it by eliding, and this
+/// seed is what makes that true on every launch.
+///
+/// It was written to match the desktop's own 671-character fixture and does
+/// not; it was counted rather than eyeballed, and every finding about the card
+/// holds at 779.
+let demoOverCapNote = """
+The room generation flip is the part nobody wrote down. When the host seeds a chat2 room it \
+stamps roomGen 2 on the chat row, and every peer that was already dialed into the s2 room has \
+to notice the stamp, tear the old dial down, and redial against the new room id — but the \
+mobile client never dials roomGen 1 at all, so on the phone the flip reads as a room that \
+simply appeared. That asymmetry is fine today and will stop being fine the moment a third \
+generation exists, because the phone's rule is written as "not 1" rather than as "the \
+generation I understand". Rewrite it as an explicit allow-list before the next generation, and \
+add a fixture that carries a generation the build has never heard of so the dial refuses \
+rather than guesses. Ask Wing about the desktop side.
+"""
+
+/// One unbreakable token with no space in it, far wider than the row. Nothing
+/// may widen or wrap the layout around it.
+///
+/// The spec calls this "the 118-character URL". This is that exact fixture,
+/// byte for byte — every measurement made against it holds — but it counts
+/// **115**, the same class of miscount the spec corrects for the note above.
+let demoUnbreakableURLNote =
+    "https://github.com/tobi404/comet/actions/runs/1874553902/jobs/2661104477?pr=173&check_suite_focus=true#step:14:2201"
+
 @MainActor
 @Observable
 final class DemoDataset {
@@ -48,13 +80,20 @@ final class DemoDataset {
         let codex = ChatConfig(harness: "codex", model: "gpt-5.6-terra",
                                reasoning: "high", sandbox: "workspace-write")
 
+        // Exactly THREE Chat Notes, on three different Colour Slots, and two
+        // of the three are the spec's own fixtures — so both are on screen on
+        // every launch rather than being a test someone remembers to run.
+        // A short note on an active row, the over-cap note on an active row,
+        // and the unbreakable URL on the shelf. Do not add a fourth: the
+        // fixtures are the reason the seeds exist.
         let chats = [
             Chat(id: "chat-veil", deviceId: "dev-mac", title: "Streaming veil on transcript rows",
                  archived: false, cwd: "/Users/dev/.zeron/worktrees/zeron-veil-fade",
                  branch: "veil-fade", checkoutId: nil,
                  config: claude, lastMessagePreview: "Porting the paint-only fade…",
                  lastMessageAt: now - 40_000, createdAt: now - 3_600_000,
-                 spaceId: zeron.id, lastSeenAt: now),
+                 spaceId: zeron.id, lastSeenAt: now,
+                 note: ChatNote(text: "Ask Dana before this merges", color: "rose")),
             Chat(id: "chat-picker", deviceId: "dev-mac", title: "Model picker catalog sync",
                  archived: false, cwd: zeron.path, branch: "main", checkoutId: nil,
                  config: claude, lastMessagePreview: "Which device owns the catalog?",
@@ -64,7 +103,8 @@ final class DemoDataset {
                  archived: false, cwd: zeron.path, branch: "main", checkoutId: nil,
                  config: codex, lastMessagePreview: "Done — failed children stay quiet.",
                  lastMessageAt: now - 900_000, createdAt: now - 86_400_000,
-                 spaceId: zeron.id, lastSeenAt: now - 3_600_000),
+                 spaceId: zeron.id, lastSeenAt: now - 3_600_000,
+                 note: ChatNote(text: demoOverCapNote, color: "green")),
             Chat(id: "chat-deploy", deviceId: "dev-vps", title: "Wrangler deploy hygiene",
                  archived: false, cwd: edge.path, branch: nil, checkoutId: nil,
                  config: claude, lastMessagePreview: "Hibernation-safe flush timer",
@@ -75,7 +115,8 @@ final class DemoDataset {
                  archived: true, cwd: zeron.path, branch: "main", checkoutId: nil,
                  config: claude, lastMessagePreview: "Gamma encode matches now.",
                  lastMessageAt: now - 86_400_000 * 3, createdAt: now - 86_400_000 * 4,
-                 spaceId: zeron.id, lastSeenAt: now - 86_400_000 * 3),
+                 spaceId: zeron.id, lastSeenAt: now - 86_400_000 * 3,
+                 note: ChatNote(text: demoUnbreakableURLNote, color: "sky")),
             Chat(id: "chat-presence", deviceId: "dev-vps", title: "Presence beat coalescing",
                  archived: true, cwd: edge.path, branch: nil, checkoutId: nil,
                  config: codex, lastMessagePreview: "Batched to one beat per 25s.",

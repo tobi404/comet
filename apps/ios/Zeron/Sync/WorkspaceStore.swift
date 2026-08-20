@@ -307,7 +307,8 @@ final class WorkspaceStore {
                         createdAt: f["createdAt"]?.int64Value ?? 0,
                         spaceId: f["spaceId"]?.stringValue,
                         lastSeenAt: f["lastSeenAt"]?.int64Value,
-                        roomGen: f["roomGen"]?.int64Value.map(Int.init))
+                        roomGen: f["roomGen"]?.int64Value.map(Int.init),
+                        note: parseChatNote(f["note"]))
         }
 
         var rows: [String: SessionRow] = [:]
@@ -674,6 +675,20 @@ final class WorkspaceStore {
         updateChat(chatId, set: ["config": value])
     }
 
+    /// The Chat Note is one LWW field on the chat row: a value writes the
+    /// whole object, `nil` writes explicit `.null` to clear it. ONE function
+    /// for both, matching `setArchived` above and the desktop's one-op
+    /// null-clears contract — two would let set and clear drift.
+    ///
+    /// The blank-text guard is repeated here as the FLOOR. `AppModel` already
+    /// applies it above the demo fork, where both paths see it; this stops a
+    /// future caller from bypassing it. A write against a deleted chat is a
+    /// no-op — `updateChat` guards `doc.rowExists`.
+    func setChatNote(chatId: String, note: ChatNote?) {
+        let stored = note.flatMap { ChatNote.normalized(text: $0.text, color: $0.color) }
+        updateChat(chatId, set: ["note": chatNoteField(stored)])
+    }
+
     /// Tombstone a chat (and its session-status row) in one batch. The
     /// per-chat session doc remains — this removes the index entry only.
     func deleteChat(chatId: String) {
@@ -716,6 +731,50 @@ final class WorkspaceStore {
         doc.write(kind: "chats", id: chatId, op: .update, set: set)
         afterLocalWrite()
     }
+}
+
+/// The Chat Note as the chat row stores it. Pure, and the read half of the
+/// wire contract in docs/adr/0001.
+///
+/// The four malformed cases do NOT get the same answer, and the asymmetry is
+/// the point. An ABSENT colour breaks the model — the desktop makes colour
+/// required, and inventing a fallback would show the user a colour nobody
+/// picked. An UNRECOGNISED colour does not: the text is user content and must
+/// survive, the colour is decorative, so the id is kept unchanged and the
+/// paint layer answers it.
+///
+/// | stored state             | here                          |
+/// | ------------------------ | ----------------------------- |
+/// | no `color`               | drops the note                |
+/// | no `text`, or blank      | drops the note                |
+/// | unknown slot id          | keeps it, id unchanged        |
+/// | text far longer than 280 | keeps it WHOLE                |
+///
+/// The last row is this build's shape, not an oversight: the phone writes
+/// registry rows directly and never passes the engine's Mutate RPC, so the
+/// 280-character cap is an authoring affordance and nothing below can enforce
+/// it as a storage invariant. Every surface elides instead.
+///
+/// This does NOT trim. `ChatNote.normalized` is the write path only —
+/// trimming here would rewrite desktop-authored text on every read.
+func parseChatNote(_ field: JSONValue?) -> ChatNote? {
+    guard let object = field?.objectValue,
+          let color = object["color"]?.stringValue,
+          let text = object["text"]?.stringValue,
+          !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    return ChatNote(text: text, color: color)
+}
+
+/// The `note` field a write stores. Pure, and the write half of the same
+/// contract: the whole object for a value, explicit `.null` for a clear.
+///
+/// `.null` DELETES a field and is a clocked write (`RegistryCore.swift:15`).
+/// An absent key would be no write at all, so the old note would stand.
+func chatNoteField(_ note: ChatNote?) -> JSONValue {
+    guard let note else { return .null }
+    // Two Strings through `JSONEncoder` cannot fail; the fallback is
+    // unreachable and exists only because the initializer is failable.
+    return JSONValue(encodable: note) ?? .null
 }
 
 /// Rows a "Clear archived" takes: the chat row and its session row, for every

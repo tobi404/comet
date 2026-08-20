@@ -44,6 +44,46 @@ struct ChatConfig: Hashable, Codable {
     var sandbox: String?
 }
 
+/// A Chat Note: a short user-authored label with one Colour Slot. Text and
+/// colour are one indivisible value — a Chat has a whole note or no note,
+/// never half of one (docs/adr/0001).
+///
+/// `color` stays a `String` here on purpose. The phone must read a note, open
+/// a menu and write it back without downgrading a slot id a newer desktop
+/// wrote; an enum would force a lossy choice at the parse boundary, which is
+/// exactly where the phone knows least. The id resolves to a colour at the
+/// paint layer only.
+///
+/// There is no unknown-key round-trip bag, and `ChatConfig`'s warning above is
+/// a narrower precedent than it looks: that one is about `modelOptions`, an
+/// open map iOS cannot author. The note is a CLOSED two-field object, replaced
+/// wholesale. A third field would be a wire change and both apps would change
+/// together.
+struct ChatNote: Hashable, Codable {
+    var text: String
+    /// Colour Slot id — `rose` `amber` `green` `sky` `violet` today, and
+    /// whatever a newer desktop ships tomorrow.
+    var color: String
+}
+
+extension ChatNote {
+    /// Empty text means clear, and this is the ONE place that rule lives.
+    ///
+    /// The desktop enforces it on both its dialog and its engine. The phone
+    /// writes registry rows directly and has no engine to be the second side,
+    /// so `AppModel.setChatNote` calls this ABOVE the demo fork — a mutation
+    /// reaches `DemoDataset` or `WorkspaceStore`, never both, so a rule both
+    /// paths need has to sit above the branch. `WorkspaceStore.setChatNote`
+    /// keeps its own guard as the floor.
+    ///
+    /// Trimming is the write path only. The read keeps stored text verbatim.
+    static func normalized(text: String, color: String) -> ChatNote? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return ChatNote(text: trimmed, color: color)
+    }
+}
+
 struct Chat: Identifiable, Hashable {
     var id: String
     var deviceId: String
@@ -61,6 +101,8 @@ struct Chat: Identifiable, Hashable {
     /// Sync room generation (docs/chat2-sync.md M2): absent/1 = legacy s2
     /// (never dialed from mobile), 2 = chat2. The host flips it when seeding.
     var roomGen: Int? = nil
+    /// The Chat Note, synced on the chat row beside `title` and `archived`.
+    var note: ChatNote? = nil
 
     var displayTitle: String {
         if let title, !title.isEmpty { return title }
