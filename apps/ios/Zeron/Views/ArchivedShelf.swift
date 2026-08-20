@@ -219,6 +219,6 @@ struct ArchivedChatRow: View {
         .restingNote(chat.note, titleLine: titleLine)
         // One mechanism on both row shapes: the 36pt row opens the same card
         // from the same gesture, with no degrade (§5, test 27).
-        .chatNoteMenu(chat, location: location, archived: true)
+        .chatNoteMenu(chat, location: location)
     }
 }

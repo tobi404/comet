@@ -105,9 +105,9 @@ private func card(_ text: String, size: DynamicTypeSize = .large,
 }
 
 @MainActor
-private func preview(_ text: String, size: DynamicTypeSize = .large,
+private func veiled(_ text: String, size: DynamicTypeSize = .large,
                      category: UIContentSizeCategory = .large) -> some View {
-    NoteCardPreview(
+    VeiledNoteCard(
         note: note(text),
         location: location,
         layout: NoteCardMetrics.layout(note: text, location: location, category: category)
@@ -253,6 +253,32 @@ final class NoteCardRenderTests: XCTestCase {
         }
     }
 
+    /// **Guard: the `lineLimit` agrees with the height.**
+    ///
+    /// §5: "the elide lands at line ten while the mask cuts at line three, and
+    /// the ellipsis never appears - which is exactly the original defect, and
+    /// is why this is two changes and not one."
+    ///
+    /// The layout carries ONE line count and the card spends it twice, so the
+    /// two cannot drift. This pins that: the height is exactly `lines` line
+    /// boxes at the size the card paints at, at every content size and on both
+    /// a note under the clamp and one far over it.
+    func testTheLineLimitAndTheHeightAreTheSameNumber() {
+        for text in [oneWord, threeLines, overCapNote, urlNote] {
+            for (_, category) in everyCategory {
+                let layout = NoteCardMetrics.layout(note: text, location: location,
+                                                    category: category)
+                let line = NoteCardMetrics.scaledFont(NoteCardMetrics.noteSize,
+                                                      category: category).lineHeight
+                XCTAssertEqual(layout.noteHeight, (CGFloat(layout.lines) * line).rounded(.up),
+                               accuracy: 0.001, "\(category.rawValue), \(text.prefix(12))…")
+                XCTAssertLessThanOrEqual(layout.lines,
+                                         NoteCardMetrics.maxLines(category: category))
+                XCTAssertGreaterThanOrEqual(layout.lines, 1)
+            }
+        }
+    }
+
     /// 24. **Guard: the forced height is the card's height, not the
     /// preview's.** The preview is `card + 2 x 14` in both axes. A rule that
     /// starts measuring the padded box silently re-opens the clip.
@@ -261,7 +287,7 @@ final class NoteCardRenderTests: XCTestCase {
             let forced = NoteCardMetrics.layout(note: text, location: location,
                                                 category: .large).cardSize
             let card = raster(card(text)).size
-            let preview = raster(preview(text)).size
+            let preview = raster(veiled(text)).size
 
             XCTAssertEqual(card.height, forced.height, accuracy: 0.7)
             XCTAssertEqual(preview.height, forced.height + 2 * NoteCardMetrics.veilInset,
@@ -354,7 +380,7 @@ final class NoteCardRenderTests: XCTestCase {
         var arcs: [(CGFloat, CGFloat)] = []
         for text in [oneWord, threeLines, overCapNote] {
             for (size, category) in [everyCategory[3], everyCategory[6], everyCategory[11]] {
-                let r = raster(preview(text, size: size, category: category))
+                let r = raster(veiled(text, size: size, category: category))
                 let inset = NoteCardMetrics.veilInset
                 // Along the card's first row, and down its first column: the
                 // corner is where the card's fill has not started yet.
@@ -384,7 +410,7 @@ final class NoteCardRenderTests: XCTestCase {
     /// rather than the page colour. A transparent inset exposes the platter's
     /// own tray — a second surface under the card.
     func testTheVeilPaintsTheMarginOpaque() {
-        let r = raster(preview(threeLines))
+        let r = raster(veiled(threeLines))
         for point in [CGPoint(x: 2, y: 2),
                       CGPoint(x: r.size.width - 2, y: 2),
                       CGPoint(x: 2, y: r.size.height - 2),
@@ -510,7 +536,7 @@ final class NoteCardRowTests: XCTestCase {
             let layout = NoteCardMetrics.layout(note: c.note!.text, location: location,
                                                 category: .large)
             return raster(
-                NoteCardPreview(note: c.note!, location: location, layout: layout)
+                VeiledNoteCard(note: c.note!, location: location, layout: layout)
                     .environment(\.dynamicTypeSize, .large)
                     .environment(\.colorScheme, .dark)
             )
@@ -530,11 +556,12 @@ final class NoteCardRowTests: XCTestCase {
     /// through `AppModel.archive` / `unarchive`, and this drives that pair
     /// end to end on both sections.
     ///
-    /// **The half measured on device**: both gestures were driven on both row
-    /// shapes and both fired — a held press on the noted session row opens the
-    /// card, and a trailing drag on the same row still reveals Archive. iOS
-    /// tells a long press and a horizontal drag apart, and `HomeView`'s
-    /// Archive and `ArchivedShelf`'s Unarchive are untouched by this build.
+    /// **The half measured on device**: all four combinations were driven and
+    /// all four fired. A held press opens the card on the noted session row
+    /// and on the 36pt shelf row; a trailing drag on the same two rows still
+    /// reveals Archive and Unarchive. iOS tells a long press and a horizontal
+    /// drag apart, and `HomeView`'s Archive and `ArchivedShelf`'s Unarchive
+    /// are untouched by this build.
     func testTheMenusArchiveIsTheSwipesOwnAct() {
         let model = demoModel()
         let id = model.overviewChats.first!.id

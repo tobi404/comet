@@ -160,16 +160,15 @@ enum NoteCardMetrics {
         let locationFont = scaledFont(locationSize, category: category)
         let width = textWidth(note: note, noteFont: noteFont,
                               location: location, locationFont: locationFont)
-        let lines = min(lineCount(note, font: noteFont, width: width),
-                        maxLines(category: category))
+        let clamp = maxLines(category: category)
+        let lines = min(lineCount(note, font: noteFont, width: width), clamp)
         return NoteCardLayout(
             textWidth: width,
             lines: lines,
             // Rounded up, so a fractional line box can never round a line
             // away. The cost is at most a point of container.
             noteHeight: (CGFloat(lines) * noteFont.lineHeight).rounded(.up),
-            locationHeight: locationFont.lineHeight.rounded(.up),
-            maxLines: maxLines(category: category)
+            locationHeight: locationFont.lineHeight.rounded(.up)
         )
     }
 
@@ -231,6 +230,11 @@ enum NoteCardMetrics {
     /// **The one constant this build introduces, and it tracks a system
     /// effect.**
     ///
+    /// It lives here and not in `Theme` on purpose: `Theme` is a port of the
+    /// desktop's `theme.rs` and every colour in it is one of the app's own.
+    /// This is not a colour the app chose - it is what iOS leaves of one, so
+    /// it belongs beside the mechanism that needs it.
+    ///
     /// While a context menu is up, iOS dims everything EXCEPT the preview, so
     /// a colour authored inside the preview renders exactly as authored while
     /// the page beside it does not. The veil therefore cannot be the page
@@ -271,14 +275,20 @@ enum NoteCardMetrics {
 /// with one font and paint with another (§5's second trap).
 struct NoteCardLayout: Equatable {
     let textWidth: CGFloat
-    /// What the note actually draws to, after the clamp.
+
+    /// **The one line count, used for both the height and the `lineLimit`.**
+    ///
+    /// It is `min(what the note wants, what the clamp allows)`. The `Text`
+    /// gets exactly this as its limit and exactly this many line boxes of
+    /// frame, so the two cannot disagree - which is the failure §5 names:
+    /// "the elide lands at line ten while the mask cuts at line three, and the
+    /// ellipsis never appears". Handing the `Text` the clamp instead would
+    /// re-open it, because the measurement may want one line fewer than the
+    /// clamp allows and the frame would then cut a line the limit permitted.
     let lines: Int
+
     let noteHeight: CGFloat
     let locationHeight: CGFloat
-    /// The clamp, as the `Text` receives it. It has to agree with
-    /// `noteHeight`, or the elide lands at one line while the frame cuts at
-    /// another and the ellipsis never appears.
-    let maxLines: Int
 
     /// **The card's size, and not the preview's.** The preview is
     /// `card + 2 * veilInset` in both axes (test 24).
@@ -386,7 +396,7 @@ struct NoteCardContent: View {
             Text(note.text)
                 .font(Theme.sans(NoteCardMetrics.noteSize))
                 .foregroundStyle(Theme.text)
-                .lineLimit(layout.maxLines)
+                .lineLimit(layout.lines)
                 .truncationMode(.tail)
                 .frame(width: layout.textWidth, height: layout.noteHeight,
                        alignment: .topLeading)
@@ -404,8 +414,11 @@ struct NoteCardContent: View {
     }
 }
 
-/// The card, inset inside the preview and veiled — the corner's whole
-/// mechanism (§5, "The corner").
+/// The card, inset and veiled — the corner's whole mechanism (§5, "The
+/// corner"). This is what the `.contextMenu` preview closure returns.
+///
+/// Named for the veil and not for the API: the surface a user reads is the
+/// Note Card, and CONTEXT.md keeps "preview" off that surface's name.
 ///
 /// **A plain radius does nothing here.** The system's preview platter masks
 /// the preview with a corner of its own, roughly half the card's height on a
@@ -428,7 +441,7 @@ struct NoteCardContent: View {
 /// `.contextMenu`, outermost over the forced height, and inside the forced
 /// height directly on the card — and all three frames are pixel-identical to
 /// the defect. Do not spend time on it.
-struct NoteCardPreview: View {
+struct VeiledNoteCard: View {
     let note: ChatNote
     let location: String
     let layout: NoteCardLayout
@@ -453,8 +466,8 @@ extension View {
     ///
     /// The trailing swipe is untouched: a long press and a horizontal drag are
     /// different gestures and iOS tells them apart (test 37).
-    func chatNoteMenu(_ chat: Chat, location: String, archived: Bool) -> some View {
-        modifier(ChatNoteMenu(chat: chat, location: location, archived: archived))
+    func chatNoteMenu(_ chat: Chat, location: String) -> some View {
+        modifier(ChatNoteMenu(chat: chat, location: location))
     }
 }
 
@@ -463,7 +476,6 @@ private struct ChatNoteMenu: ViewModifier {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let chat: Chat
     let location: String
-    let archived: Bool
 
     /// The card's numbers, resolved while the row is at rest. The press reads
     /// them; it does not compute them.
@@ -474,7 +486,7 @@ private struct ChatNoteMenu: ViewModifier {
             content.contextMenu {
                 items(hasNote: true)
             } preview: {
-                NoteCardPreview(
+                VeiledNoteCard(
                     note: note,
                     location: location,
                     layout: NoteCardMetrics.layout(note: note.text,
@@ -499,12 +511,15 @@ private struct ChatNoteMenu: ViewModifier {
         // the menu and the swipe say the same thing rather than two different
         // things — and this is the swipe's own call, animation included.
         Button {
+            // The verb is the Chat's own, never a caller's flag: a row that
+            // disagreed with the model would offer to archive an archived
+            // session.
             withAnimation(Motion.resort) {
-                if archived { model.unarchive(chatId: chat.id) }
+                if chat.archived { model.unarchive(chatId: chat.id) }
                 else { model.archive(chatId: chat.id) }
             }
         } label: {
-            archived
+            chat.archived
                 ? Label("Unarchive", systemImage: "arrow.up.bin")
                 : Label("Archive", systemImage: "archivebox")
         }

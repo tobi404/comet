@@ -322,7 +322,7 @@ struct ChatRow: View {
         }
         // The long press sits on the whole row and not on the Button, so a
         // bare row lifts everything it draws — the badge included (§5, §6).
-        .chatNoteMenu(chat, location: location, archived: false)
+        .chatNoteMenu(chat, location: location)
     }
 
     private func content(indicator: ChatIndicator, reservesPullRequest: Bool) -> some View {
