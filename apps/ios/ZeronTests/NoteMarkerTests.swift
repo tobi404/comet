@@ -23,10 +23,15 @@ private let renderScale: CGFloat = 3
 /// on it; the title's truncation does.
 private let screenWidth: CGFloat = 402
 
-/// The list's `listRowInsets` leading and trailing, on BOTH sections
-/// (`HomeView.swift`, `ArchivedShelf.rowInsets`). The marker's inset composes
-/// with this one; it does not stack on it.
-private let listRowInsetH: CGFloat = 12
+/// The list's `listRowInsets` leading, read off the two production
+/// constants rather than restated. The marker's inset composes with this one;
+/// it does not stack on it.
+@MainActor private let sessionListInset = ChatRow.listInsets.leading
+@MainActor private let shelfListInset = ArchivedSection.rowInsets.leading
+
+/// The centre of the marker's 3pt column, in points from the screen edge.
+@MainActor private let markerCentreX =
+    sessionListInset + NoteMarker.leadingInset + NoteMarker.width / 2
 
 private struct Raster {
     let pixels: [UInt8]  // RGBA8, premultiplied-last
@@ -89,7 +94,7 @@ private func raster<V: View>(_ view: V) -> Raster {
 @MainActor
 private func inList<V: View>(_ row: V, dynamicType: DynamicTypeSize = .large) -> some View {
     row
-        .padding(.horizontal, listRowInsetH)
+        .padding(.horizontal, sessionListInset)
         .frame(width: screenWidth)
         .background(Theme.surface)
         .environment(\.dynamicTypeSize, dynamicType)
@@ -171,18 +176,18 @@ final class NoteMarkerRenderTests: XCTestCase {
     func testTheHeightIsTheRowsOwnTitleLineOnBothShapes() {
         let model = demoModel()
         let note = ChatNote(text: "Ask Dana before this merges", color: slot)
-        let x = listRowInsetH + NoteMarker.leadingInset + NoteMarker.width / 2
 
-        let session = raster(inList(sessionRow(note: note, model: model)))
-        XCTAssertEqual(session.runHeight(atX: x, ink: ink, background: page), 17.0, accuracy: 0.5)
+        for row in [AnyView(sessionRow(note: note, model: model)), AnyView(shelfRow(note: note))] {
+            let r = raster(inList(row))
+            let marked = r.runHeight(atX: markerCentreX, ink: ink, background: page)
+            XCTAssertEqual(marked, 17.0, accuracy: 0.5)
 
-        let shelf = raster(inList(shelfRow(note: note)))
-        XCTAssertEqual(shelf.runHeight(atX: x, ink: ink, background: page), 17.0, accuracy: 0.5)
-
-        // The clamp does not bind at either row's height: 55.7pt is available
-        // on the session row and 30pt on the shelf.
-        XCTAssertEqual(NoteMarker.height(titleLine: 17, rowHeight: 61.7), 17, accuracy: 0.001)
-        XCTAssertEqual(NoteMarker.height(titleLine: 17, rowHeight: 36), 17, accuracy: 0.001)
+            // And the clamp does not bind at the height that row actually
+            // rendered to — read back off the raster, not restated.
+            let rowHeight = CGFloat(r.height) / renderScale
+            XCTAssertEqual(NoteMarker.height(titleLine: marked, rowHeight: rowHeight),
+                           marked, accuracy: 0.001)
+        }
     }
 
     /// 15's reproducer: the shelf at `accessibility-extra-extra-extra-large`,
@@ -190,11 +195,28 @@ final class NoteMarkerRenderTests: XCTestCase {
     /// adjacent markers meet and three notes render as one stripe.
     func testTheShelfClampBindsAtTheLargestTextSize() {
         let note = ChatNote(text: "Gamut clamp was silent", color: slot)
-        let x = listRowInsetH + NoteMarker.leadingInset + NoteMarker.width / 2
         let shelf = raster(inList(shelfRow(note: note), dynamicType: .accessibility5))
-        let h = shelf.runHeight(atX: x, ink: ink, background: page)
+        let h = shelf.runHeight(atX: markerCentreX, ink: ink, background: page)
         XCTAssertGreaterThan(h, 0)
         XCTAssertLessThanOrEqual(h, 36 - 2 * NoteMarker.cap + 0.5)
+    }
+
+    /// 17, directly: `.restingNote(nil, …)` renders as though the marker code
+    /// were not there at all. This is the half the diff below cannot see —
+    /// the modifier itself is present in both of those renders, so a layout
+    /// shift caused by the plumbing would be invisible to it.
+    func testTheModifierItselfIsANoOpWithoutANote() {
+        let bare = HStack {
+            Text("Streaming veil on transcript rows").font(Theme.sans(13))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(width: 300)
+        .background(Theme.surface)
+
+        XCTAssertEqual(raster(bare).pixels,
+                       raster(bare.restingNote(nil, titleLine: 17)).pixels)
     }
 
     /// 17. The overlay contributes no layout: a row with no note is not
@@ -220,8 +242,8 @@ final class NoteMarkerRenderTests: XCTestCase {
     private func assertOnlyTheMarkerBandDiffers(bare: Raster, noted: Raster, shape: String) {
         XCTAssertEqual(bare.width, noted.width, "\(shape): width moved")
         XCTAssertEqual(bare.height, noted.height, "\(shape): height moved")
-        let band = (Int((listRowInsetH + NoteMarker.leadingInset) * renderScale)
-            ..< Int((listRowInsetH + NoteMarker.leadingInset + NoteMarker.width) * renderScale))
+        let band = (Int((sessionListInset + NoteMarker.leadingInset) * renderScale)
+            ..< Int((sessionListInset + NoteMarker.leadingInset + NoteMarker.width) * renderScale))
         var outside = 0
         for py in 0..<bare.height {
             for px in 0..<bare.width where !band.contains(px) {
@@ -237,8 +259,9 @@ final class NoteMarkerRenderTests: XCTestCase {
     func testTheShelfMarkerIsNotDimmed() {
         let note = ChatNote(text: "Ask Dana", color: slot)
         let shelf = raster(inList(shelfRow(note: note)))
-        let x = listRowInsetH + NoteMarker.leadingInset + NoteMarker.width / 2
-        let sampled = shelf.at(x: x, y: 18)
+        // Mid-row on the pinned 36pt shelf row, well inside the marker's
+        // 9.5-26.5pt span, where a 0.55 dim would be unmissable.
+        let sampled = shelf.at(x: markerCentreX, y: 18)
         for (got, want) in zip(sampled, ink) {
             XCTAssertEqual(got, want, accuracy: 0.01)
         }
@@ -249,16 +272,17 @@ final class NoteMarkerRenderTests: XCTestCase {
     func testTheMarkersLeadingEdgeIs14ptFromTheScreenEdgeOnBothSections() {
         let model = demoModel()
         let note = ChatNote(text: "Ask Dana", color: slot)
-        XCTAssertEqual(listRowInsetH + NoteMarker.leadingInset, 14)
+        XCTAssertEqual(sessionListInset, shelfListInset, "the two sections' insets drifted")
+        XCTAssertEqual(sessionListInset + NoteMarker.leadingInset, 14)
 
         for row in [AnyView(sessionRow(note: note, model: model)), AnyView(shelfRow(note: note))] {
             let r = raster(inList(row))
             let mid = CGFloat(r.height) / renderScale / 2
             // Inside the mark, and one point clear of it on the page side.
-            for (got, want) in zip(r.at(x: 15.5, y: mid), ink) {
+            for (got, want) in zip(r.at(x: markerCentreX, y: mid), ink) {
                 XCTAssertEqual(got, want, accuracy: 0.01)
             }
-            for (got, want) in zip(r.at(x: 12.5, y: mid), page) {
+            for (got, want) in zip(r.at(x: sessionListInset + 0.5, y: mid), page) {
                 XCTAssertEqual(got, want, accuracy: 0.01)
             }
         }

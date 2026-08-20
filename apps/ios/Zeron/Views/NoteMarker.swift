@@ -12,9 +12,10 @@
 // clamp — and it works on the session row. The archived shelf puts a dimmed
 // harness mark BEFORE the title, so the same overlay lands 38pt from the
 // screen edge instead of 14pt, and the badge is conditional (`if let
-// harness`), so no fixed offset repairs it. What ships instead: the title
-// publishes its height, and the marker is an overlay on the ROW's wash box.
-// The title gives the height; the row gives the position.
+// harness`), so no fixed offset repairs it. What ships instead: each row
+// measures its own title with `onGeometryChange` and hands the line box to
+// an overlay on the ROW's wash box. The title gives the height; the row
+// gives the position.
 
 import SwiftUI
 
@@ -60,47 +61,26 @@ enum NoteMarker {
     /// How far a rounded rect's corner arc has retreated from its top edge,
     /// `leadingInset` in from its leading edge. `cap` has to clear this, or a
     /// bound clamp puts the marker's end outside the wash it paints on.
-    static func cornerIntrusion(radius: CGFloat, inset: CGFloat = leadingInset) -> CGFloat {
-        guard inset > 0, inset < radius else { return 0 }
-        let dx = radius - inset
+    static func cornerIntrusion(radius: CGFloat) -> CGFloat {
+        guard leadingInset > 0, leadingInset < radius else { return 0 }
+        let dx = radius - leadingInset
         return radius - (radius * radius - dx * dx).squareRoot()
     }
 }
 
-// MARK: - The measurement channel
-
-/// The row's own title line box, published out of the row's content so the
-/// overlay on the row's wash box can take its height.
-///
-/// **A preference and not `onGeometryChange` on purpose.** The measured value
-/// has to travel from inside the button's label to a modifier applied outside
-/// its `ButtonStyle`, and the two row shapes have nowhere in common to keep
-/// it: the session row is a `struct` that could hold `@State`, but the shelf
-/// builds its row inline inside `ArchivedShelf` and cannot. A preference read
-/// back through `overlayPreferenceValue` needs no per-row state at all, and
-/// so it is one shared piece rather than two.
-private struct NoteMarkerTitleHeight: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
+// MARK: - The note at rest, on a row
 
 extension View {
-    /// Mark the row's title. Its laid-out line box becomes the marker's
-    /// height, so the marker follows Dynamic Type without knowing a font size.
-    func noteMarkerTitle() -> some View {
-        background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: NoteMarkerTitleHeight.self,
-                                       value: proxy.size.height)
-            }
-        )
-    }
-
-    /// The resting marker, on the row's wash box. Apply it AFTER the row's
+    /// The Chat Note at rest on a row: the marker, and what the row says
+    /// aloud. One shared piece, called from both row shapes.
+    ///
+    /// **Apply it to the row's wash box**, AFTER the row's
     /// `.buttonStyle(PressWashButtonStyle())`, so the marker paints over the
-    /// press wash rather than under it.
+    /// press wash rather than under it. `titleLine` is the row's own title
+    /// height, measured with `onGeometryChange` — it is a parameter and not a
+    /// measurement of its own, because the title sits inside the button's
+    /// label and the marker sits outside its `ButtonStyle`, so only the row
+    /// itself can see both.
     ///
     /// **The overlay contributes no layout**, so a row with no note is not
     /// merely similar to today's row — it is identical.
@@ -112,10 +92,9 @@ extension View {
     /// full strength is what it gets.
     ///
     /// **The marker announces nothing.** It is 3pt of colour carrying a Colour
-    /// Slot, and a colour is not a label; the row's value (`noteValue`) is
-    /// what speaks.
-    func noteMarker(_ note: ChatNote?) -> some View {
-        overlayPreferenceValue(NoteMarkerTitleHeight.self) { titleLine in
+    /// Slot, and a colour is not a label; the row's value is what speaks.
+    func restingNote(_ note: ChatNote?, titleLine: CGFloat) -> some View {
+        overlay(alignment: .leading) {
             GeometryReader { proxy in
                 if let note {
                     Capsule()
@@ -132,29 +111,25 @@ extension View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
-    }
-
-    /// What a noted row says aloud (§8), on both row shapes.
-    ///
-    /// **A value, not a rebuilt label.** VoiceOver reads the label and then
-    /// the value, so the note lands at the end of the row's existing
-    /// announcement and nothing already there moves.
-    ///
-    /// **The prefix is "Note, ".** Without it a note that opens with a noun is
-    /// indistinguishable from a fifth column of the row.
-    ///
-    /// **No length cap.** The Note Card clamps because it has a screen to fit
-    /// into; speech has no such bound, and a user scanning a list swipes past.
-    func noteValue(_ note: ChatNote?) -> some View {
+        // **A value, not a rebuilt label.** VoiceOver reads the label and then
+        // the value, so the note lands at the end of the row's existing
+        // announcement and nothing already there moves.
+        //
         // An empty value is no value: VoiceOver skips it. Written as one
         // unconditional modifier rather than an `if let`, so adding or
         // clearing a note never re-identifies the row's subtree.
-        accessibilityValue(Text(verbatim: noteSpokenValue(note) ?? ""))
+        .accessibilityValue(Text(verbatim: noteSpokenValue(note) ?? ""))
     }
 }
 
 /// The row's spoken value, or `nil` when the row carries no note. Split out
 /// so §9 can assert the string itself rather than an accessibility tree.
+///
+/// **The prefix is "Note, ".** Without it a note that opens with a noun is
+/// indistinguishable from a fifth column of the row.
+///
+/// **No length cap.** The Note Card clamps because it has a screen to fit
+/// into; speech has no such bound, and a user scanning a list swipes past.
 func noteSpokenValue(_ note: ChatNote?) -> String? {
     note.map { "Note, " + $0.text }
 }

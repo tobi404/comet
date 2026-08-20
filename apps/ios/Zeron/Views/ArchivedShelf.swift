@@ -34,7 +34,7 @@ struct ArchivedSection: View {
     private static let initialCount = 10
     private static let pageSize = 25
 
-    private static let rowInsets = EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
+    static let rowInsets = EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
 
     var body: some View {
         let archived = model.archivedChats(in: spaceId)
@@ -181,6 +181,9 @@ struct ArchivedChatRow: View {
     let chat: Chat
     let onSelect: () -> Void
 
+    /// The row's own title line box — the resting marker's height rule (§4).
+    @State private var titleLine: CGFloat = 0
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 10) {
@@ -194,7 +197,7 @@ struct ArchivedChatRow: View {
                     .foregroundStyle(Theme.text.opacity(0.55))
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .noteMarkerTitle()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { titleLine = $0 }
                 Text(relativeTime(chat.lastMessageAt ?? chat.createdAt))
                     .font(Theme.sans(11))
                     .foregroundStyle(Theme.textMuted.opacity(0.55))
@@ -205,7 +208,6 @@ struct ArchivedChatRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(PressWashButtonStyle())
-        .noteMarker(chat.note)
-        .noteValue(chat.note)
+        .restingNote(chat.note, titleLine: titleLine)
     }
 }

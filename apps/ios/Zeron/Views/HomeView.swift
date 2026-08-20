@@ -257,7 +257,7 @@ struct HomeView: View {
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 1, leading: 12, bottom: 1, trailing: 12))
+                .listRowInsets(ChatRow.listInsets)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button {
                         // withAnimation, not a value-keyed .animation: the row
@@ -295,7 +295,14 @@ struct ChatRow: View {
     var showLocation: Bool
     let onSelect: () -> Void
 
+    /// The row's own title line box — the resting marker's height rule (§4).
+    @State private var titleLine: CGFloat = 0
+
     private var subline: Color { Theme.textMuted.opacity(0.5) }
+
+    /// The list's row insets, shared with `SpaceView` so both session lists
+    /// put the marker's leading edge in the same place (§4, test 19).
+    static let listInsets = EdgeInsets(top: 1, leading: 12, bottom: 1, trailing: 12)
 
     var body: some View {
         let indicator = model.indicator(for: chat)
@@ -305,8 +312,7 @@ struct ChatRow: View {
                 content(indicator: indicator, reservesPullRequest: pullRequest != nil)
             }
             .buttonStyle(PressWashButtonStyle())
-            .noteMarker(chat.note)
-            .noteValue(chat.note)
+            .restingNote(chat.note, titleLine: titleLine)
             if let pullRequest {
                 PullRequestBadge(summary: pullRequest)
                     .padding(.trailing, 8)
@@ -347,7 +353,7 @@ struct ChatRow: View {
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .noteMarkerTitle()
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { titleLine = $0 }
 
             // Line 3: harness brand mark, then the branch when the engine
             // stamped one; the Working spinner rides bottom-right.
