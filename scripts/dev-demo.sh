@@ -35,15 +35,17 @@ if [[ ! -f "$DAEMON_DIR/.demo-seeded" ]]; then
   echo "▸ seeding demo chats"
   DEV=$(probe LocalDevice '{}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["deviceId"])')
   # One space per demo folder, created up-front (chats join by space id).
-  declare -A SPACES=()
-  for project in zeron soccertcg zeron aether; do
+  # Held in SPACE_<project> vars rather than an associative array: macOS ships
+  # bash 3.2, which has no `declare -A`.
+  for project in zeron soccertcg aether; do
     sid=$(uuidgen | tr 'A-Z' 'a-z')
     probe Mutate "{\"op\":\"createSpace\",\"spaceId\":\"$sid\",\"deviceId\":\"$DEV\",\"path\":\"$HOME/github/$project\"}" >/dev/null
-    SPACES[$project]="$sid"
+    printf -v "SPACE_$project" '%s' "$sid"
   done
   seed() { # title project branch age_hours run
     local id; id=$(uuidgen | tr 'A-Z' 'a-z')
-    local sid="${SPACES[$2]}"
+    local space_var="SPACE_$2"
+    local sid="${!space_var}"
     probe Mutate "{\"op\":\"createChat\",\"chatId\":\"$id\",\"spaceId\":\"$sid\",\"config\":{\"harness\":\"mock\",\"model\":\"fable-5\",\"reasoning\":null,\"sandbox\":\"workspace-write\"}}" >/dev/null
     probe Mutate "{\"op\":\"renameChat\",\"chatId\":\"$id\",\"title\":\"$1\"}" >/dev/null
     probe Mutate "{\"op\":\"setChatBranch\",\"chatId\":\"$id\",\"branch\":\"$3\"}" >/dev/null
