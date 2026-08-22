@@ -609,12 +609,8 @@ impl Shell {
         let rows: Vec<ActiveChatRow> = {
             let state = self.state.read(cx);
             state
-                .overview_chats(now)
+                .sidebar_chats(now, filter.as_deref())
                 .into_iter()
-                .filter(|(_, chat)| match &filter {
-                    Some(space_id) => chat.space_id.as_deref() == Some(space_id.as_str()),
-                    None => true,
-                })
                 .map(|(status, chat)| {
                     // Line 1 is "project @ device" (t3code's project row);
                     // project-less sessions read as their home-dir cwd `~`.
@@ -648,8 +644,11 @@ impl Shell {
                 .collect()
         };
         let selected = self.state.read(cx).selected_chat.clone();
+        let jump_hints = self.jump_hints;
+        let keymap = self.settings.keymap.clone();
         rows.into_iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(slot, row)| {
                 let ActiveChatRow {
                     status,
                     chat,
@@ -662,6 +661,14 @@ impl Shell {
                 let is_selected = selected.as_deref() == Some(chat.id.as_str());
                 let height = super::CHAT_ROW_HEIGHT;
                 let harness = chat.config.as_ref().map(|c| c.harness);
+                // Only rows a jump slot can reach wear a chip; row 10 onward
+                // keeps its time-ago.
+                let jump_label: Option<SharedString> = if jump_hints {
+                    let combo = keymap.get(ShortcutId::JumpSession(slot));
+                    (slot < JUMP_SLOTS && !combo.is_empty()).then(|| display_combo(combo).into())
+                } else {
+                    None
+                };
                 let element = self.render_chat_row(
                     chat.id.clone(),
                     transcript::single_line(
@@ -677,6 +684,7 @@ impl Shell {
                     status,
                     is_selected,
                     false,
+                    jump_label,
                     theme,
                     cx,
                 );
