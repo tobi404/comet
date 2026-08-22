@@ -64,7 +64,13 @@ use spaces::{AddSpaceFlow, RenameSpaceDialog};
 
 actions!(
     shell,
-    [ToggleSidebar, ToggleChanges, AddSpacePalette, NewSession]
+    [
+        ToggleSidebar,
+        ToggleChanges,
+        AddSpacePalette,
+        NewSession,
+        ArchiveSession
+    ]
 );
 
 // ---------------------------------------------------------------------------
@@ -167,6 +173,11 @@ pub fn apply_keymap(cx: &mut App, keymap: &KeymapConfig) {
         KeyBinding::new(
             &valid_or_default(&keymap.new_session, "mod-n"),
             NewSession,
+            None,
+        ),
+        KeyBinding::new(
+            &valid_or_default(&keymap.archive_session, "mod-shift-a"),
+            ArchiveSession,
             None,
         ),
         // Fixed: ⌘K summons the add-space palette (the ⌘K chip in its search
@@ -2325,6 +2336,21 @@ impl Shell {
 
     fn archive_chat(&mut self, chat_id: String, cx: &mut Context<Self>) {
         self.set_chat_archived(chat_id, true, cx);
+    }
+
+    /// The Archive session shortcut. With no chat open, or with an already
+    /// archived one, it does nothing — the shortcut archives, it never
+    /// unarchives.
+    fn archive_selected_chat(&mut self, cx: &mut Context<Self>) {
+        let Some(chat_id) = self
+            .state
+            .read(cx)
+            .archivable_selected_chat()
+            .map(str::to_string)
+        else {
+            return;
+        };
+        self.archive_chat(chat_id, cx);
     }
 
     pub(super) fn set_chat_archived(
@@ -6992,6 +7018,13 @@ impl Render for Shell {
             .on_action(cx.listener(|this, _: &ToggleChanges, _, cx| {
                 if matches!(this.route, Route::Chat) {
                     this.toggle_right_pane(cx)
+                }
+            }))
+            // Chat-scoped like the panel toggles: Settings has no current
+            // session to archive.
+            .on_action(cx.listener(|this, _: &ArchiveSession, _, cx| {
+                if matches!(this.route, Route::Chat) {
+                    this.archive_selected_chat(cx)
                 }
             }))
             .on_action(cx.listener(|this, _: &AddSpacePalette, _, cx| {
