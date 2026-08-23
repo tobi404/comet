@@ -160,16 +160,19 @@ pub enum ShortcutId {
     ToggleTerminal,
     NewSession,
     ArchiveSession,
+    /// Open the Note Editor on the selected Chat.
+    EditNote,
     JumpSession(usize),
 }
 
 impl ShortcutId {
-    pub const ALL: [ShortcutId; 5 + JUMP_SLOTS] = [
+    pub const ALL: [ShortcutId; 6 + JUMP_SLOTS] = [
         ShortcutId::ToggleSidebar,
         ShortcutId::ToggleChanges,
         ShortcutId::ToggleTerminal,
         ShortcutId::NewSession,
         ShortcutId::ArchiveSession,
+        ShortcutId::EditNote,
         ShortcutId::JumpSession(0),
         ShortcutId::JumpSession(1),
         ShortcutId::JumpSession(2),
@@ -189,6 +192,7 @@ impl ShortcutId {
             ShortcutId::ToggleTerminal => "Toggle terminal",
             ShortcutId::NewSession => "New session",
             ShortcutId::ArchiveSession => "Archive session",
+            ShortcutId::EditNote => "Edit note",
             ShortcutId::JumpSession(slot) => JUMP_LABELS.get(slot).copied().unwrap_or(""),
         }
     }
@@ -202,6 +206,9 @@ impl ShortcutId {
             // Mod+A is the composer's Select all, so archiving takes the
             // shifted combo.
             ShortcutId::ArchiveSession => "mod-shift-a",
+            // Mod+N opens a new session, so the note it would carry takes the
+            // shifted combo.
+            ShortcutId::EditNote => "mod-shift-n",
             ShortcutId::JumpSession(slot) => JUMP_DEFAULTS.get(slot).copied().unwrap_or(""),
         }
     }
@@ -225,6 +232,7 @@ pub struct KeymapConfig {
     pub toggle_terminal: String,
     pub new_session: String,
     pub archive_session: String,
+    pub edit_note: String,
     /// One combo per jump slot, in slot order. A list rather than nine fields:
     /// [`UiSettings::load`] discards the WHOLE file on a parse error, so a
     /// fixed-length array would let one malformed entry reset every unrelated
@@ -240,6 +248,7 @@ impl Default for KeymapConfig {
             toggle_terminal: ShortcutId::ToggleTerminal.default_combo().into(),
             new_session: ShortcutId::NewSession.default_combo().into(),
             archive_session: ShortcutId::ArchiveSession.default_combo().into(),
+            edit_note: ShortcutId::EditNote.default_combo().into(),
             jump_session: JUMP_DEFAULTS.iter().map(|c| (*c).to_string()).collect(),
         }
     }
@@ -253,6 +262,7 @@ impl KeymapConfig {
             ShortcutId::ToggleTerminal => &self.toggle_terminal,
             ShortcutId::NewSession => &self.new_session,
             ShortcutId::ArchiveSession => &self.archive_session,
+            ShortcutId::EditNote => &self.edit_note,
             ShortcutId::JumpSession(slot) => self
                 .jump_session
                 .get(slot)
@@ -268,6 +278,7 @@ impl KeymapConfig {
             ShortcutId::ToggleTerminal => self.toggle_terminal = combo,
             ShortcutId::NewSession => self.new_session = combo,
             ShortcutId::ArchiveSession => self.archive_session = combo,
+            ShortcutId::EditNote => self.edit_note = combo,
             ShortcutId::JumpSession(slot) => {
                 if slot < JUMP_SLOTS {
                     if self.jump_session.len() < JUMP_SLOTS {
@@ -600,6 +611,7 @@ mod tests {
         assert_eq!(keymap.get(ShortcutId::ToggleTerminal), "mod-j");
         assert_eq!(keymap.get(ShortcutId::NewSession), "mod-n");
         assert_eq!(keymap.get(ShortcutId::ArchiveSession), "mod-shift-a");
+        assert_eq!(keymap.get(ShortcutId::EditNote), "mod-shift-n");
         keymap.set(ShortcutId::ToggleSidebar, "mod-shift-x".into());
         assert_eq!(keymap.get(ShortcutId::ToggleSidebar), "mod-shift-x");
         keymap.reset(ShortcutId::ToggleSidebar);
@@ -608,6 +620,10 @@ mod tests {
         assert_eq!(keymap.get(ShortcutId::ArchiveSession), "mod-shift-y");
         keymap.reset(ShortcutId::ArchiveSession);
         assert_eq!(keymap.get(ShortcutId::ArchiveSession), "mod-shift-a");
+        keymap.set(ShortcutId::EditNote, "mod-shift-z".into());
+        assert_eq!(keymap.get(ShortcutId::EditNote), "mod-shift-z");
+        keymap.reset(ShortcutId::EditNote);
+        assert_eq!(keymap.get(ShortcutId::EditNote), "mod-shift-n");
     }
 
     #[test]
@@ -804,8 +820,8 @@ mod tests {
 
     #[test]
     fn keymap_fills_in_shortcuts_added_later() {
-        // A file written before "Archive session" existed keeps its customized
-        // combos and takes the default for the new row.
+        // A file written before "Archive session" and "Edit note" existed keeps
+        // its customized combos and takes the default for the new rows.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             UiSettings::path(dir.path()),
@@ -815,6 +831,7 @@ mod tests {
         let loaded = UiSettings::load(dir.path());
         assert_eq!(loaded.keymap.get(ShortcutId::ToggleSidebar), "mod-shift-x");
         assert_eq!(loaded.keymap.get(ShortcutId::ArchiveSession), "mod-shift-a");
+        assert_eq!(loaded.keymap.get(ShortcutId::EditNote), "mod-shift-n");
     }
 
     #[test]

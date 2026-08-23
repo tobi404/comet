@@ -129,6 +129,7 @@ fn description(id: ShortcutId) -> &'static str {
         ShortcutId::ToggleTerminal => "Show or hide the terminal for the current session.",
         ShortcutId::NewSession => "Open a blank session canvas to start a new session.",
         ShortcutId::ArchiveSession => "Move the current session to the archived shelf.",
+        ShortcutId::EditNote => "Write or edit the note on the current session.",
         // One line per slot would repeat itself nine times; the ordinal is
         // already in the row's label.
         ShortcutId::JumpSession(_) => "Open the session at this place in the sidebar list.",

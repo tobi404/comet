@@ -90,6 +90,27 @@ pub(super) fn menu_label(has_note: bool) -> &'static str {
 }
 
 impl Shell {
+    /// The keyboard route into the dialog (`EditNote`). Opens on the selected
+    /// Chat, and does nothing when there is none.
+    ///
+    /// An already-open dialog is left alone rather than re-opened: a second
+    /// press would otherwise rebuild the input and throw away text the user has
+    /// typed. Escape still closes it.
+    pub(super) fn open_note_editor_for_selection(&mut self, cx: &mut Context<Self>) {
+        if self.note_editor.is_some() {
+            return;
+        }
+        let Some(chat_id) = self
+            .state
+            .read(cx)
+            .selected_chat_row()
+            .map(|chat| chat.id.clone())
+        else {
+            return;
+        };
+        self.open_note_editor(chat_id, cx);
+    }
+
     pub(super) fn open_note_editor(&mut self, chat_id: String, cx: &mut Context<Self>) {
         self.close_chat_menu(cx);
 

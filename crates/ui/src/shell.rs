@@ -71,7 +71,8 @@ actions!(
         ToggleChanges,
         AddSpacePalette,
         NewSession,
-        ArchiveSession
+        ArchiveSession,
+        EditNote
     ]
 );
 
@@ -233,6 +234,11 @@ pub fn apply_keymap(cx: &mut App, keymap: &KeymapConfig) {
         KeyBinding::new(
             &valid_or_default(&keymap.archive_session, "mod-shift-a"),
             ArchiveSession,
+            None,
+        ),
+        KeyBinding::new(
+            &valid_or_default(&keymap.edit_note, "mod-shift-n"),
+            EditNote,
             None,
         ),
         // Fixed: ⌘K summons the add-space palette (the ⌘K chip in its search
@@ -7250,6 +7256,13 @@ impl Render for Shell {
             .on_action(cx.listener(|this, _: &ArchiveSession, _, cx| {
                 if matches!(this.route, Route::Chat) {
                     this.archive_selected_chat(cx)
+                }
+            }))
+            // Chat-scoped for the same reason: the note belongs to the chat the
+            // sidebar has selected.
+            .on_action(cx.listener(|this, _: &EditNote, _, cx| {
+                if matches!(this.route, Route::Chat) {
+                    this.open_note_editor_for_selection(cx)
                 }
             }))
             // A jump routes back to chat itself, so Settings is not a dead
