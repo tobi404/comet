@@ -253,8 +253,9 @@ impl OpencodeHarness {
         resolve_opencode_executable().ok_or_else(|| HarnessError::NotInstalled(INSTALL_HINT.into()))
     }
 
-    /// Boot (or attach to) a server for a run/probe. Probes have no chat cwd:
-    /// they boot in the user's home, where global provider config lives.
+    /// Boot (or attach to) a server for a run/probe. `None` boots in the
+    /// user's home, where global provider config lives; the model probe has no
+    /// chat cwd, and command discovery passes the workspace it asks about.
     async fn server(&self, cwd: Option<&str>) -> Result<Server, HarnessError> {
         if let Some(base) = &self.base_url {
             return Ok(Server::attached(base.clone()));
@@ -291,16 +292,26 @@ impl OpencodeHarness {
         result
     }
 
-    async fn probe_commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
+    /// The cache holds the home-scoped list only. A workspace's list is that
+    /// workspace's, so a `Some(cwd)` probe neither reads nor primes it — one
+    /// list per harness would key every workspace to whichever asked first.
+    async fn probe_commands(&self, cwd: Option<&str>) -> Result<Vec<SlashCommand>, HarnessError> {
         let _guard = self.probe_lock.lock().await;
-        if let Some(commands) = self.commands_cache.get() {
-            return Ok(commands.clone());
+        if cwd.is_none() {
+            if let Some(commands) = self.commands_cache.get() {
+                return Ok(commands.clone());
+            }
         }
-        let mut server = self.server(None).await?;
+        let mut server = self.server(cwd).await?;
         let result = server
             .get_json("/command", None)
             .await
             .map(|v| commands_from_wire(&v));
+        if cwd.is_none() {
+            if let Ok(commands) = &result {
+                let _ = self.commands_cache.set(commands.clone());
+            }
+        }
         server.shutdown(self.kill_grace).await;
         result
     }
@@ -349,11 +360,11 @@ impl Harness for OpencodeHarness {
             .cloned()
     }
 
-    async fn commands(&self) -> Result<Vec<SlashCommand>, HarnessError> {
-        self.commands_cache
-            .get_or_try_init(|| self.probe_commands())
-            .await
-            .cloned()
+    /// Discovery for one workspace: the server boots in `cwd`, so the
+    /// project's own commands are listed. Repeat calls are the engine's to
+    /// cache — it keys per (harness, cwd), which is the right unit.
+    async fn commands(&self, cwd: Option<&str>) -> Result<Vec<SlashCommand>, HarnessError> {
+        self.probe_commands(cwd).await
     }
 
     async fn run(
